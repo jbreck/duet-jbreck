@@ -276,7 +276,7 @@ type 'a label =
   | Weight of 'a
   | Call of int * int
 
-module MakeRecGraph (W : Weight) = struct
+module MakeRecGraphBase (W : Weight) = struct
 
   module CallSet = BatSet.Make(IntPair)
   module VertexSet = SrkUtil.Int.Set
@@ -301,7 +301,6 @@ module MakeRecGraph (W : Weight) = struct
         M.add u (CallSet.singleton v) callgraph
     let empty = M.empty
   end
-  module CallGraphWTO = Graph.WeakTopological.Make(CallGraph)
 
   let fold_reachable_edges f g v acc =
     let visited = ref VertexSet.empty in
@@ -404,6 +403,12 @@ module MakeRecGraph (W : Weight) = struct
       query.graph
       src
       query
+end
+
+module MakeRecGraph (W : Weight) = struct
+  include MakeRecGraphBase(W)
+
+  module CallGraphWTO = Graph.WeakTopological.Make(CallGraph)
 
   let mk_query ?(delay=1) rg =
     let table = mk_table () in
@@ -544,16 +549,275 @@ module MakeRecGraph (W : Weight) = struct
         query
     end
 
-  let path_weight query src tgt =
-    (* For each (s,t) call edge reachable from src, add corresponding edge
-       from src to s with the path weight from src to s *)
-    let query' = add_call_edges query src in
-    let weight =
-      weight_algebra (fun s t ->
-          match M.find (s, t) query'.labels with
-          | Weight w -> w
-          | Call (en, ex) -> M.find (en, ex) query'.summaries)
+    let path_weight query src tgt =
+      (* For each (s,t) call edge reachable from src, add corresponding edge
+         from src to s with the path weight from src to s *)
+      let query' = add_call_edges query src in
+      let weight =
+        weight_algebra (fun s t ->
+            match M.find (s, t) query'.labels with
+            | Weight w -> w
+            | Call (en, ex) -> M.find (en, ex) query'.summaries)
+      in
+      path_weight query'.graph src tgt
+      |> eval ~table:query.table weight
+  
+end
+
+
+
+
+
+
+
+
+
+module type NonLinearWeight = sig
+  type t
+  val mul : t -> t -> t
+  val add : t -> t -> t
+  val zero : t
+  val one : t
+  val top : t (* used by the top-down / depth-based analysis *)
+  val star : t -> t
+  val equal : t -> t -> bool
+  val project : t -> t
+  val widen : t -> t -> t
+end
+
+module MakeRecGraphNonLinear (W : NonLinearWeight) = struct
+  include MakeRecGraphBase(W)
+  module CallGraphSCCs = Graph.Components.Make(CallGraph)
+  
+  (* This non-linear version of mk_query must be called with a 
+        summarizer function that knows how to summarize a
+        strongly connected component of the call graph *)
+  let mk_query ?(delay=1) rg summarizer =
+    let table = mk_table () in
+    let context = mk_context () in
+    let calls = (* All calls that appear on a call edge *)
+      fold_edges (fun (_, label, _) callset ->
+          match label with
+          | Weight _ -> callset
+          | Call (en, ex) -> CallSet.add (en, ex) callset)
+        rg
+        CallSet.empty
     in
-    path_weight query'.graph src tgt
-    |> eval ~table:query.table weight
+    let path_graph =
+      { graph = rg.graph;
+        labels = M.mapi (fun (u,v) _ -> mk_edge context u v) rg.labels;
+        algebra = pathexp_algebra context }
+    in
+
+    if CallSet.is_empty calls then
+      (*{ summaries = M.empty;
+        table;
+        graph = path_graph;
+        context;
+        labels = rg.labels }*) ()
+    else begin
+      (* call_pathexpr is a map from (s,t) pairs to the path expressions
+          of all paths from s to t; in these path expressions, each edge,
+          say from u to v, is represented as (mk_edge ctx (u,v))-- as 
+          constructed in path_graph above-- that is, edges don't have
+          weights (with type W.t) on them, and call edges aren't treated
+          specially. *)
+      let call_pathexpr =
+        CallSet.fold (fun (src, tgt) pathexpr ->
+            M.add (src, tgt) (path_weight path_graph src tgt) pathexpr)
+          calls
+          M.empty
+      in
+      (* Create a fresh call vertex to serve as entry.  It will have an edge
+           to every other call *)
+      let callgraph_entry =
+        let (s, t) = CallSet.min_elt calls in
+        (s-1, s-1)
+      in
+      let callgraph_sccs =
+        (* pe_calls takes a node of a path expression and returns a CallSet.t
+              which is the set of calls that are under that node; it is 
+              intended to be given as a parameter to eval, which will walk
+              over a path expression, calling pe_calls on each node *)
+        let pe_calls = function
+          | `Edge (s, t) ->
+            begin match M.find (s, t) rg.labels with
+              | Call (en, ex) -> CallSet.singleton (en, ex)
+              | _ -> CallSet.empty
+            end
+          | `Mul (x, y) | `Add (x, y) -> CallSet.union x y
+          | `Star x -> x
+          | `Zero | `One -> CallSet.empty
+        in
+        let table = mk_table () in
+        (* Edges added by the following action may no longer be necessary: *)
+        let initial_callgraph =
+          CallSet.fold (fun call callgraph ->
+              CallGraph.add_edge callgraph callgraph_entry call)
+            calls
+            CallGraph.empty
+        in
+        (* If there is a call to (s,t) between s' and t', add a dependence
+           edge from (s',t') to (s,t) *)
+        let callgraph =
+          M.fold (fun proc pathexpr callgraph ->
+              CallSet.fold (fun target callgraph ->
+                  CallGraph.add_edge callgraph target proc)
+                (eval ~table pe_calls pathexpr)
+                callgraph)
+            call_pathexpr
+            initial_callgraph (* Use CallGraph.empty here? *)
+        in      
+        CallGraphSCCs.scc_list callgraph
+        in 
+      let summaries = ref (M.map (fun _ -> W.zero) call_pathexpr) in
+      let weight =
+        weight_algebra (fun s t ->
+            match M.find (s, t) rg.labels with
+            | Weight w -> w
+            | Call (en, ex) -> M.find (en, ex) (!summaries))
+      in
+      let is_stable_edge unstable s t =
+        match M.find (s, t) rg.labels with
+        | Weight _ -> true
+        | Call (s, t) -> not (CallSet.mem (s, t) unstable)
+      in      
+      let rec summarize_sccs scc_list =
+        match scc_list with 
+        | [] -> ()
+        | callgraph_scc :: rest ->
+          begin
+            let is_within_scc proc = List.mem proc callgraph_scc
+            in 
+            (* proc_weight takes a procedure key, proc, (which is just an s,t pair) 
+                  and a map from procedure keys to weights (of type W.t) and 
+                  it gives back a weight for the procedure proc *)
+            let proc_weight proc call_map =
+              let weight_with_mapped_calls = 
+                weight_algebra (fun s t ->
+                match M.find (s, t) rg.labels with
+                | Weight w -> w
+                | Call (en, ex) -> 
+                  if is_within_scc (en,ex) then M.find (en, ex) (!call_map)
+                  else M.find (en, ex) (!summaries))
+              in
+              eval weight_with_mapped_calls (M.find proc call_pathexpr)
+            in
+            (* Call the client's summarizer to summarize the current SCC *)
+            let new_summary_map = summarizer callgraph_scc proc_weight
+            in
+            M.iter (fun proc summary -> 
+                    summaries := M.add proc summary (!summaries) ) 
+                   new_summary_map;
+            summarize_sccs rest
+          end
+      in
+      summarize_sccs callgraph_sccs
+    (* 
+      *)
+      (*
+      (* Compute summaries *************************************************)
+      let callgraph_wto =
+        let pe_calls = function
+          | `Edge (s, t) ->
+            begin match M.find (s, t) rg.labels with
+              | Call (en, ex) -> CallSet.singleton (en, ex)
+              | _ -> CallSet.empty
+            end
+          | `Mul (x, y) | `Add (x, y) -> CallSet.union x y
+          | `Star x -> x
+          | `Zero | `One -> CallSet.empty
+        in
+        let table = mk_table () in
+        let initial_callgraph =
+          CallSet.fold (fun call callgraph ->
+              CallGraph.add_edge callgraph callgraph_entry call)
+            calls
+            CallGraph.empty
+        in
+        (* If there is a call to (s,t) between s' and t', add a dependence
+           edge from (s',t') to (s,t) *)
+        let callgraph =
+          M.fold (fun proc pathexpr callgraph ->
+              CallSet.fold (fun target callgraph ->
+                  CallGraph.add_edge callgraph target proc)
+                (eval ~table pe_calls pathexpr)
+                callgraph)
+            call_pathexpr
+            initial_callgraph
+        in
+        CallGraphWTO.recursive_scc callgraph callgraph_entry
+      in
+      let summaries = ref (M.map (fun _ -> W.zero) call_pathexpr) in
+      let weight =
+        weight_algebra (fun s t ->
+            match M.find (s, t) rg.labels with
+            | Weight w -> w
+            | Call (en, ex) -> M.find (en, ex) (!summaries))
+      in
+      let is_stable_edge unstable s t =
+        match M.find (s, t) rg.labels with
+        | Weight _ -> true
+        | Call (s, t) -> not (CallSet.mem (s, t) unstable)
+      in
+      let rec loop_calls vertices wto = (* Collect all calls within an SCC *)
+        let open Graph.WeakTopological in
+        match wto with
+        | Vertex v -> CallSet.add v vertices
+        | Component (v, rest) ->
+          fold_left loop_calls (CallSet.add v vertices) rest
+      in
+
+      (* stabilize summaries within a WTO component, and add to unstable all
+         calls whose summary (may have) changed as a result. *)
+      let rec fix () wto =
+        let open Graph.WeakTopological in
+        match wto with
+        | Vertex call when call = callgraph_entry -> ()
+        | Vertex call ->
+          let pathexpr = M.find call call_pathexpr in
+          let new_weight =
+            eval ~table weight pathexpr
+            |> W.project
+          in
+          summaries := M.add call new_weight (!summaries)
+        | Component (call, rest) ->
+          let pathexpr = M.find call call_pathexpr in
+          let unstable = loop_calls CallSet.empty wto in
+          let rec fix_component delay =
+            let old_weight = M.find call (!summaries) in
+            let new_weight =
+              eval ~table weight pathexpr
+              |> W.project
+            in
+            let new_weight =
+              if delay > 0 then new_weight
+              else W.widen old_weight new_weight
+            in
+            summaries := M.add call new_weight (!summaries);
+            fold_left fix () rest;
+            if not (W.equal old_weight new_weight) then begin
+              forget table (is_stable_edge unstable);
+              fix_component (delay - 1)
+            end
+          in
+          fix_component delay
+      in
+      Graph.WeakTopological.fold_left fix () callgraph_wto;
+      let query =
+        { summaries = !summaries;
+          table;
+          graph = path_graph;
+          context;
+          labels = rg.labels }
+      in
+      (* For each (s,t) call containing a call (s',t'), add an edge from s to s'
+         with the path weight from s to call(s',t'). *)
+      CallSet.fold
+        (fun (src, tgt) query' -> add_call_edges query' src)
+        calls
+        query
+      *)
+    end
+  
 end
