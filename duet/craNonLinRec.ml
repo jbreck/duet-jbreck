@@ -777,9 +777,9 @@ let analyze_nonlinrec file =
       let (ts, assertions) = Cra.make_transition_system rg in
       let summarizer (scc : BURG.scc) path_weight_internal = 
         print_endline "I saw an SCC:";
-        List.iter (fun (u,v) -> (Printf.printf "  Proc (%d,%d)\n" u v)) scc.procs;
+        List.iter (fun (u,v,p) -> (Format.printf "  Proc(%d,%d) = %t \n" u v (fun f -> Pathexpr.pp f p))) scc.procs;
         [] in
-      (* *)
+      (* *) 
       let query = BURG.mk_query ts summarizer in
        ()
       (* let query = TS.mk_query ts in *)

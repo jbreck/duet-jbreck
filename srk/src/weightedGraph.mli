@@ -152,8 +152,8 @@ module MakeBottomUpRecGraph (W : Weight) : sig
   type query
 
   type scc = 
-    { path_graph : Pathexpr.t weighted_graph;
-      procs : (int * int) list }
+    { (* path_graph : Pathexpr.t weighted_graph; *)
+      procs : (int * int * Pathexpr.t) list }
 
   val empty : t
 

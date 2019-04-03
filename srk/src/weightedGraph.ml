@@ -601,8 +601,8 @@ module MakeBottomUpRecGraph (W : Weight) = struct
   module CallGraphSCCs = Graph.Components.Make(CallGraph)
 
   type scc = 
-    { path_graph : Pathexpr.t weighted_graph;
-      procs : (int * int) list }
+    { (* path_graph : Pathexpr.t weighted_graph; *)
+      procs : (int * int * Pathexpr.t) list }
   
   (* This non-linear version of mk_query must be called with a 
         summarizer function that knows how to summarize a
@@ -666,12 +666,13 @@ module MakeBottomUpRecGraph (W : Weight) = struct
         in
         let table = mk_table () in
         (* Edges added by the following action may no longer be necessary: *)
+        (*
         let initial_callgraph =
           CallSet.fold (fun call callgraph ->
               CallGraph.add_edge callgraph callgraph_entry call)
             calls
             CallGraph.empty
-        in
+        in *)
         (* If there is a call to (s,t) between s' and t', add a dependence
            edge from (s',t') to (s,t) *)
         let callgraph =
@@ -681,7 +682,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
                 (eval ~table pe_procs pathexpr)
                 callgraph)
             call_pathexpr
-            initial_callgraph (* Use CallGraph.empty here? *)
+            CallGraph.empty (* initial_callgraph *) (* Use CallGraph.empty here? *)
         in      
         CallGraphSCCs.scc_list callgraph (* = callgraph_sccs *)
         in 
@@ -734,8 +735,12 @@ module MakeBottomUpRecGraph (W : Weight) = struct
                 path_weight path_graph src tgt
                 |> eval (* ~table:query.table *) weight
             in
+            (* let this_scc = 
+              { path_graph = path_graph; procs = callgraph_scc } in *)
             let this_scc = 
-              { path_graph = path_graph; procs = callgraph_scc } in
+              { procs = List.map 
+                        (fun (u,v) -> (u,v,M.find (u,v) call_pathexpr)) 
+                        callgraph_scc } in
             (* Call the client's summarizer to summarize the current SCC *)
             let new_summary_list = summarizer this_scc path_weight_internal
             in
