@@ -145,3 +145,23 @@ module MakeRecGraph (W : Weight) : sig
       vertices.  *)
   val path_weight : query -> vertex -> vertex -> W.t
 end
+
+module MakeBottomUpRecGraph (W : Weight) : sig
+  type t = (W.t label) weighted_graph
+
+  type query
+
+  type scc = 
+    { rg : W.t label weighted_graph;
+      procs : (int * int) list }
+
+  val empty : t
+
+  val mk_query : ?delay:int ->
+                 W.t label weighted_graph ->
+                (scc -> 
+                  (vertex -> vertex -> (int -> int -> int -> int -> W.t) -> W.t) ->
+                ((int * int * W.t) list) ) -> unit
+
+  val path_weight : query -> vertex -> vertex -> W.t
+end

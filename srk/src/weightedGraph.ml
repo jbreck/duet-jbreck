@@ -403,6 +403,7 @@ module MakeRecGraphBase (W : Weight) = struct
       query.graph
       src
       query
+
 end
 
 module MakeRecGraph (W : Weight) = struct
@@ -564,15 +565,25 @@ module MakeRecGraph (W : Weight) = struct
   
 end
 
+(*
+   (* Maybe I want an SCCAnalyzer module? *)
+*)
 
+(* (* Maybe I want this? *)
+type 'a scc = 
+  { rg : W.t label weighted_graph;
+    procs : (int * int) list;
+    call_sites : (int * int) list }
 
+ (* For example: *)
+type 'a weighted_graph =
+  { graph : U.t;
+    labels : 'a M.t;
+    algebra : 'a algebra }
 
+*)
 
-
-
-
-
-module type NonLinearWeight = sig
+(* module type NonLinearWeight = sig
   type t
   val mul : t -> t -> t
   val add : t -> t -> t
@@ -583,11 +594,15 @@ module type NonLinearWeight = sig
   val equal : t -> t -> bool
   val project : t -> t
   val widen : t -> t -> t
-end
+end *)
 
-module MakeRecGraphNonLinear (W : NonLinearWeight) = struct
+module MakeBottomUpRecGraph (W : Weight) = struct
   include MakeRecGraphBase(W)
   module CallGraphSCCs = Graph.Components.Make(CallGraph)
+
+  type scc = 
+    { rg : W.t label weighted_graph;
+      procs : (int * int) list }
   
   (* This non-linear version of mk_query must be called with a 
         summarizer function that knows how to summarize a
@@ -635,11 +650,11 @@ module MakeRecGraphNonLinear (W : NonLinearWeight) = struct
         (s-1, s-1)
       in
       let callgraph_sccs =
-        (* pe_calls takes a node of a path expression and returns a CallSet.t
+        (* pe_procs takes a node of a path expression and returns a CallSet.t
               which is the set of calls that are under that node; it is 
               intended to be given as a parameter to eval, which will walk
-              over a path expression, calling pe_calls on each node *)
-        let pe_calls = function
+              over a path expression, calling pe_procs on each node *)
+        let pe_procs = function
           | `Edge (s, t) ->
             begin match M.find (s, t) rg.labels with
               | Call (en, ex) -> CallSet.singleton (en, ex)
@@ -663,25 +678,25 @@ module MakeRecGraphNonLinear (W : NonLinearWeight) = struct
           M.fold (fun proc pathexpr callgraph ->
               CallSet.fold (fun target callgraph ->
                   CallGraph.add_edge callgraph target proc)
-                (eval ~table pe_calls pathexpr)
+                (eval ~table pe_procs pathexpr)
                 callgraph)
             call_pathexpr
             initial_callgraph (* Use CallGraph.empty here? *)
         in      
-        CallGraphSCCs.scc_list callgraph
+        CallGraphSCCs.scc_list callgraph (* = callgraph_sccs *)
         in 
       let summaries = ref (M.map (fun _ -> W.zero) call_pathexpr) in
-      let weight =
+      (* let weight =
         weight_algebra (fun s t ->
             match M.find (s, t) rg.labels with
             | Weight w -> w
             | Call (en, ex) -> M.find (en, ex) (!summaries))
-      in
-      let is_stable_edge unstable s t =
+      in *)
+      (* let is_stable_edge unstable s t =
         match M.find (s, t) rg.labels with
         | Weight _ -> true
         | Call (s, t) -> not (CallSet.mem (s, t) unstable)
-      in      
+      in *)
       let rec summarize_sccs scc_list =
         match scc_list with 
         | [] -> ()
@@ -689,30 +704,49 @@ module MakeRecGraphNonLinear (W : NonLinearWeight) = struct
           begin
             let is_within_scc proc = List.mem proc callgraph_scc
             in 
-            (* proc_weight takes a procedure key, proc, (which is just an s,t pair) 
-                  and a map from procedure keys to weights (of type W.t) and 
-                  it gives back a weight for the procedure proc *)
-            let proc_weight proc call_map =
-              let weight_with_mapped_calls = 
-                weight_algebra (fun s t ->
-                match M.find (s, t) rg.labels with
-                | Weight w -> w
-                | Call (en, ex) -> 
-                  if is_within_scc (en,ex) then M.find (en, ex) (!call_map)
-                  else M.find (en, ex) (!summaries))
-              in
-              eval weight_with_mapped_calls (M.find proc call_pathexpr)
+            (*  let path_weight query src tgt =
+                (* For each (s,t) call edge reachable from src, add corresponding edge
+                   from src to s with the path weight from src to s *)
+                let query' = add_call_edges query src in
+                let weight =
+                  weight_algebra (fun s t ->
+                      match M.find (s, t) query'.labels with
+                      | Weight w -> w
+                      | Call (en, ex) -> M.find (en, ex) query'.summaries)
+                in
+                path_weight query'.graph src tgt
+                |> eval ~table:query.table weight *)
+            (* Idea: should we not give back SCCs that have no calls in them? *)
+            (* Idea: should we really give a separate recgraph back for each SCC? *)
+            (* path_weight_internal takes a (src,tgt) pair and 
+                  a call-mapping function (from the client, 
+                  returning type W.t), and it gives back a W.t for the 
+                  paths from src to tgt *)
+            let path_weight_internal src tgt call_weight = 
+                let weight =
+                  weight_algebra (fun s t ->
+                      match M.find (s, t) rg.labels with
+                      | Weight w -> w
+                      | Call (en, ex) -> 
+                          if is_within_scc (en,ex) then (call_weight s t en ex)
+                          else M.find (en, ex) (!summaries))
+                in
+                path_weight path_graph src tgt
+                |> eval (* ~table:query.table *) weight
             in
+            let this_scc = 
+              { rg = rg; procs = callgraph_scc } in
             (* Call the client's summarizer to summarize the current SCC *)
-            let new_summary_map = summarizer callgraph_scc proc_weight
+            let new_summary_list = summarizer this_scc path_weight_internal
             in
-            M.iter (fun proc summary -> 
-                    summaries := M.add proc summary (!summaries) ) 
-                   new_summary_map;
+            List.iter (fun (s, t, summary) -> 
+                    summaries := M.add (s,t) summary (!summaries) ) 
+                   new_summary_list;
             summarize_sccs rest
           end
       in
       summarize_sccs callgraph_sccs
+
     (* 
       *)
       (*
@@ -819,5 +853,18 @@ module MakeRecGraphNonLinear (W : NonLinearWeight) = struct
         query
       *)
     end
+
+    let path_weight query src tgt =
+      (* For each (s,t) call edge reachable from src, add corresponding edge
+         from src to s with the path weight from src to s *)
+      let query' = add_call_edges query src in
+      let weight =
+        weight_algebra (fun s t ->
+            match M.find (s, t) query'.labels with
+            | Weight w -> w
+            | Call (en, ex) -> M.find (en, ex) query'.summaries)
+      in
+      path_weight query'.graph src tgt
+      |> eval ~table:query.table weight
   
 end
