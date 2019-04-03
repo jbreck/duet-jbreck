@@ -601,7 +601,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
   module CallGraphSCCs = Graph.Components.Make(CallGraph)
 
   type scc = 
-    { rg : W.t label weighted_graph;
+    { path_graph : Pathexpr.t weighted_graph;
       procs : (int * int) list }
   
   (* This non-linear version of mk_query must be called with a 
@@ -735,7 +735,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
                 |> eval (* ~table:query.table *) weight
             in
             let this_scc = 
-              { rg = rg; procs = callgraph_scc } in
+              { path_graph = path_graph; procs = callgraph_scc } in
             (* Call the client's summarizer to summarize the current SCC *)
             let new_summary_list = summarizer this_scc path_weight_internal
             in

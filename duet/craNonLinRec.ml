@@ -782,7 +782,7 @@ let analyze_nonlinrec file =
       (* *)
       let query = BURG.mk_query ts summarizer in
        ()
-      (*let query = TS.mk_query ts in*)
+      (* let query = TS.mk_query ts in *)
     end
   (*
       ts |> WeightedGraph.iter_edges (fun (u, label, v) ->
