@@ -5,7 +5,8 @@ open Srk
 
 module RG = Interproc.RG
 module G = RG.G
-module K = NewtonDomain.ICRASum
+(*module K = NewtonDomain.ICRASum*)
+module K = Cra.K
 module Ctx = NewtonDomain.Ctx
 
 include Log.Make(struct let name = "cra_nonlinrec" end)
@@ -772,10 +773,10 @@ end
 (*module IntPairMap = BatMap.Make(IntPair)*)
 module IntPairSet = BatSet.Make(IntPair)
 
-let project = Cra.K.exists Cra.V.is_global
+let project = K.exists Cra.V.is_global
 
 module BURG = WeightedGraph.MakeBottomUpRecGraph(struct
-  include Cra.K
+  include K
   let project = project
 end)
 
@@ -785,7 +786,7 @@ let print_indented indent k =
       (SrkUtil.mk_show (fun formatter tr ->
           Format.pp_open_vbox formatter indent;
           Format.pp_print_break formatter 0 0;
-          Format.fprintf formatter "%a" Cra.K.pp tr;
+          Format.fprintf formatter "%a" K.pp tr;
           Format.pp_close_box formatter ()) k)
 
 let analyze_nonlinrec file =
@@ -796,7 +797,7 @@ let analyze_nonlinrec file =
       let (ts, assertions) = Cra.make_transition_system rg in
       let top = 
         (* let open CfgIr in let file = get_gfile() in *)
-        Cra.K.havoc (List.map (fun vi -> Cra.VVal (Var.mk vi)) file.vars) in
+        K.havoc (List.map (fun vi -> Cra.VVal (Var.mk vi)) file.vars) in
       let summarizer (scc : BURG.scc) path_weight_internal = 
         print_endline "I saw an SCC:";
         List.iter (fun (u,v,p) -> (Format.printf "  Proc(%d,%d) = %t \n" u v (fun f -> Pathexpr.pp f p))) scc.procs;
@@ -817,13 +818,18 @@ let analyze_nonlinrec file =
             Format.printf "]\n";
             let weight_of_call cs ct cen cex = project top in
             Format.printf "  fragments = [";
-            IntPairSet.iter (fun (s,t) -> 
+            let sum_of_fragments = IntPairSet.fold (fun (s,t) running_total -> 
               let fragment_weight = path_weight_internal p_entry s weight_of_call in
               (* (Format.printf "  << %t >> \n" (fun f -> Pathexpr.pp f fragment_weight)) *)
-              (*Format.fprintf Format.std_formatter "<<( %a )>> \n" Cra.K.pp fragment_weight*)
+              (*Format.fprintf Format.std_formatter "<<( %a )>> \n" K.pp fragment_weight*)
               print_indented 15 fragment_weight;
-              Format.printf "\n"
-              ) call_edges;
+              Format.printf "\n";
+              K.add running_total fragment_weight
+              ) call_edges K.zero in
+            Format.printf "  ]\n";
+            let phi_td = (K.star sum_of_fragments) in
+            Format.printf "  phi_td = [";
+            print_indented 15 phi_td;
             Format.printf "  ]\n";
             ()) scc.procs;
         [] in
