@@ -764,10 +764,29 @@ external add_wpds_print_hull_rule: int -> int -> int -> unit = "add_wpds_print_h
 
 *)
 
+module IntPair = struct
+  type t = int * int [@@deriving ord]
+  let equal (x,y) (x',y') = (x=x' && y=y')
+  let hash = Hashtbl.hash
+end
+(*module IntPairMap = BatMap.Make(IntPair)*)
+module IntPairSet = BatSet.Make(IntPair)
+
+let project = Cra.K.exists Cra.V.is_global
+
 module BURG = WeightedGraph.MakeBottomUpRecGraph(struct
   include Cra.K
-  let project = exists Cra.V.is_global
+  let project = project
 end)
+
+(* ugly: copied from newtonDomain just for debugging *)
+let print_indented indent k =
+      Printf.printf "%s"
+      (SrkUtil.mk_show (fun formatter tr ->
+          Format.pp_open_vbox formatter indent;
+          Format.pp_print_break formatter 0 0;
+          Format.fprintf formatter "%a" Cra.K.pp tr;
+          Format.pp_close_box formatter ()) k)
 
 let analyze_nonlinrec file =
   Cra.populate_offset_table file;
@@ -775,9 +794,38 @@ let analyze_nonlinrec file =
   | [main] -> begin
       let rg = Interproc.make_recgraph file in
       let (ts, assertions) = Cra.make_transition_system rg in
+      let top = 
+        (* let open CfgIr in let file = get_gfile() in *)
+        Cra.K.havoc (List.map (fun vi -> Cra.VVal (Var.mk vi)) file.vars) in
       let summarizer (scc : BURG.scc) path_weight_internal = 
         print_endline "I saw an SCC:";
         List.iter (fun (u,v,p) -> (Format.printf "  Proc(%d,%d) = %t \n" u v (fun f -> Pathexpr.pp f p))) scc.procs;
+        List.iter (fun (p_entry,p_exit,pathexpr) ->
+            let pe_call_edge_set = function
+              | `Edge (s, t) ->
+                begin match WeightedGraph.edge_weight ts s t with
+                  | Call (en, ex) -> IntPairSet.singleton (s,t)
+                  | _ -> IntPairSet.empty
+                end
+              | `Mul (x, y) | `Add (x, y) -> IntPairSet.union x y
+              | `Star x -> x
+              | `Zero | `One -> IntPairSet.empty
+            in
+            let call_edges = eval pe_call_edge_set pathexpr in
+            Format.printf "  calls = [ ";
+            IntPairSet.iter (fun (s,t) -> Format.printf "(%d,%d) " s t) call_edges;
+            Format.printf "]\n";
+            let weight_of_call cs ct cen cex = project top in
+            Format.printf "  fragments = [";
+            IntPairSet.iter (fun (s,t) -> 
+              let fragment_weight = path_weight_internal p_entry s weight_of_call in
+              (* (Format.printf "  << %t >> \n" (fun f -> Pathexpr.pp f fragment_weight)) *)
+              (*Format.fprintf Format.std_formatter "<<( %a )>> \n" Cra.K.pp fragment_weight*)
+              print_indented 15 fragment_weight;
+              Format.printf "\n"
+              ) call_edges;
+            Format.printf "  ]\n";
+            ()) scc.procs;
         [] in
       (* *) 
       let query = BURG.mk_query ts summarizer in

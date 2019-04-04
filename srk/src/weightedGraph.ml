@@ -723,13 +723,14 @@ module MakeBottomUpRecGraph (W : Weight) = struct
                   a call-mapping function (from the client, 
                   returning type W.t), and it gives back a W.t for the 
                   paths from src to tgt *)
-            let path_weight_internal src tgt call_weight = 
+            let path_weight_internal src tgt weight_of_call = 
                 let weight =
                   weight_algebra (fun s t ->
                       match M.find (s, t) rg.labels with
                       | Weight w -> w
                       | Call (en, ex) -> 
-                          if is_within_scc (en,ex) then (call_weight s t en ex)
+                          if is_within_scc (en,ex) 
+                          then weight_of_call s t en ex
                           else M.find (en, ex) (!summaries))
                 in
                 path_weight path_graph src tgt
