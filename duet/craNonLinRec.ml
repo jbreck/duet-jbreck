@@ -66,10 +66,10 @@ let analyze_nonlinrec file =
             Format.printf "  calls = [ ";
             IntPairSet.iter (fun (s,t) -> Format.printf "(%d,%d) " s t) call_edges;
             Format.printf "]\n";
-            let weight_of_call cs ct cen cex = project top in
+            let weight_of_call_top cs ct cen cex = project top in
             Format.printf "  fragments = [";
             let sum_of_fragments = IntPairSet.fold (fun (s,t) running_total -> 
-              let fragment_weight = path_weight_internal p_entry s weight_of_call in
+              let fragment_weight = path_weight_internal p_entry s weight_of_call_top in
               (* (Format.printf "  << %t >> \n" (fun f -> Pathexpr.pp f fragment_weight)) *)
               (* Format.fprintf Format.std_formatter "<<( %a )>> \n" K.pp fragment_weight *)
               print_indented 15 fragment_weight;
@@ -80,6 +80,11 @@ let analyze_nonlinrec file =
             let phi_td = (K.star sum_of_fragments) in
             Format.printf "  phi_td = [";
             print_indented 15 phi_td;
+            Format.printf "  ]\n";
+            let weight_of_call_zero cs ct cen cex = K.zero in
+            let base_case_weight = path_weight_internal p_entry p_exit weight_of_call_zero in
+            Format.printf "  base_case = [";
+            print_indented 15 base_case_weight;
             Format.printf "  ]\n";
             ()) scc.procs;
         [] in
