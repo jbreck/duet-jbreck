@@ -39,6 +39,49 @@ let print_indented indent k =
           Format.fprintf formatter "%a" K.pp tr;
           Format.pp_close_box formatter ()) k)
 
+(* *) (* let name = "a[" ^ (Term.show srk t) ^ "]" in *)
+(*let abstract ?(exists=fun x -> true) srk tr_symbols phi =
+  let post_symbols = post_symbols tr_symbols in
+  let subterm x = not (Symbol.Set.mem x post_symbols) in
+  Wedge.abstract ~exists ~subterm srk phi
+  |> abstract_wedge srk tr_symbols *)
+(* *)
+(*let closure iter =
+    let srk = iter.srk in
+    let loop_counter_sym = mk_symbol srk ~name:"K" `TyInt in
+    let loop_counter = mk_const srk loop_counter_sym in
+    mk_and srk [(**)Iter.exp(**) iter.srk iter.tr_symbols loop_counter iter.iter;
+                mk_leq srk (mk_real srk QQ.zero) loop_counter] *)
+(*let abstract ?(exists=fun x -> true) srk tr_symbols body =
+    let iter = (**)Iter.abstract(**) ~exists srk tr_symbols body in
+    { srk; tr_symbols; iter } *)
+(*let alpha tr =
+    let (tr_symbols, body) = to_transition_formula tr in
+    let exists =
+      let post_symbols =
+        List.fold_left
+          (fun set (_, sym') -> Symbol.Set.add sym' set)
+          Symbol.Set.empty
+          tr_symbols
+      in
+      fun x ->
+        match Var.of_symbol x with
+        | Some _ -> true
+        | None -> Symbol.Set.mem x post_symbols
+    in
+    (**)D.abstract(**) ~exists srk tr_symbols body *)
+(*let closure iter =
+    let transform =
+      List.fold_left (fun tr (pre, post) ->
+          match Var.of_symbol pre with
+          | Some v -> M.add v (mk_const srk post) tr
+          | None -> assert false)
+        M.empty
+        (D.tr_symbols iter)
+    in
+    { transform = transform;
+      guard = (**)D.closure(**) iter } *)
+
 let analyze_nonlinrec file =
   Cra.populate_offset_table file;
   match file.entry_points with
@@ -86,6 +129,44 @@ let analyze_nonlinrec file =
             Format.printf "  base_case = [";
             print_indented 15 base_case_weight;
             Format.printf "  ]\n";
+            (* *)
+            let (tr_symbols, body) = K.to_transition_formula base_case_weight in
+            let wedge = Wedge.abstract Cra.srk body in 
+            Format.printf "  base_case_wedge = %t \n" (fun f -> Wedge.pp f wedge);
+            let cs = Wedge.coordinate_system wedge in
+            let make_bounding_var t = 
+                let term = CoordinateSystem.term_of_vec cs t in
+                Format.printf "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;
+              let bounding_var_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"B" `TyInt in
+              let bounding_var = Srk.Syntax.mk_const Cra.srk bounding_var_sym in 
+              let bounding_atom = Srk.Syntax.mk_leq Cra.srk term bounding_var in 
+              bounding_atom in
+              (* PROBABLY KEEP TRACK OF SEVERAL OF THESE THINGS... *)
+            let bounding_atoms = ref [] in
+            let analyze_recurrence = 
+              function
+              | (`Eq, t) ->
+                bounding_atoms := (make_bounding_var t) :: (!bounding_atoms) ;
+                (* NEED TO DO NEGATED ONE ALSO *)
+                ()
+                (*Format.printf "  rec equation: %a \n" Linear.QQVector.pp t;*)
+              | (`Geq, t) ->
+                (* NEED TO DO NEGATED ONE ONLY *)
+                ()
+            in
+            List.iter analyze_recurrence (Wedge.polyhedron wedge);
+            let call_abstraction_fmla = Srk.Syntax.mk_and Cra.srk (!bounding_atoms) in 
+            (* let call_abstraction = K.construct *)
+            (*)
+            let atom_evaluator (formula_node : ('x, 'y) Srk.Syntax.open_formula) = 
+            match formula_node with
+            |  in
+            let analyze_atom atom = 
+              Srk.Syntax.Formula.eval Cra.srk atom_evaluator atom in
+            let atoms = Wedge.to_atoms wedge in
+            List.iter analyze_atom atoms;
+            *)
+            ();
             ()) scc.procs;
         [] in
       (* *) 
