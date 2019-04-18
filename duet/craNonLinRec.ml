@@ -218,18 +218,38 @@ let mk_height_based_summary bounds recursive_weight =
     (* FIXME: THIS IS QUICK AND DIRTY *)
     (List.fold_left (fun found (inner_sym,outer_sym) -> 
       found || inner_sym == x || outer_sym == x) false (!b_in_b_out_pairs))
-    
     (*(List.fold_left (fun found (vpre,vpost) -> found || vpost == x) false tr_symbols)*)
-    (*|| 
-    match Cra.V.of_symbol x with 
-    | Some v -> Cra.V.is_global v
-    | None -> false (* false *)
-    *)
+    (*|| match Cra.V.of_symbol x with | Some v -> Cra.V.is_global v | None -> false (* false *) *)
   in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk full_conjunction in 
-  Format.printf "\n  extraction_wedge = @.%t@. \n\n" (fun f -> Wedge.pp f wedge);
-  
+  Format.printf "\n  extraction_wedge = @.%t@. \n\n" (fun f -> Wedge.pp f wedge); 
+  let direct_recurrence_extraction (inner_sym, target_outer_sym) = 
+      let targeted_projection x = 
+        (List.fold_left (fun found (inner_sym, _) -> 
+          found || inner_sym == x || target_outer_sym == x) false (!b_in_b_out_pairs)) in 
+      let sub_wedge = Wedge.exists targeted_projection wedge in 
+      let sub_cs = Wedge.coordinate_system sub_wedge in 
+      let target_vec = CoordinateSystem.vec_of_term 
+        sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym) in 
+      let examine_inequation vec negate =
+          let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
+          let term = CoordinateSystem.term_of_vec sub_cs vec in 
+          (* FIXME: the following test should be made faster *)
+          (if ((QQ.compare (Srk.Linear.QQVector.dot vec target_vec) QQ.zero) < 0) then
+          begin
+            Format.printf "  extracted recurrence inequation: %a@." (Srk.Syntax.Term.pp Cra.srk) term;
+            () 
+          end
+          else ()) in
+      let handle_constraint = function 
+        | (`Eq, vec) ->  examine_inequation vec true; examine_inequation vec false
+        | (`Geq, vec) -> examine_inequation vec false 
+        in 
+      List.iter handle_constraint (Wedge.polyhedron sub_wedge) 
+        in
+  List.iter direct_recurrence_extraction (!b_in_b_out_pairs);
   (* *)
+  ()
   (*  - Create B_out variables
       - Associate each B_out variable to the appropriate outer-call term
       ? How do I get things connected properly to pre- and post- variables?
@@ -240,7 +260,6 @@ let mk_height_based_summary bounds recursive_weight =
       - Walk over the B_out inequations, dump ones that break some rules
 
       * Consider: Make a second set of variables for the unchanging bounds?  *)
-  ()
 (*
     let mul left right =
     let fresh_skolem =
