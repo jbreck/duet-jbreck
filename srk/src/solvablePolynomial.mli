@@ -23,3 +23,14 @@ module SolvablePolynomialPeriodicRational : PreDomainWedge
    quantified precondition expressed over terms with
    Presurger-definable dynamics. *)
 module PresburgerGuard : PreDomain
+
+
+val exp_ocrs_external :
+   'a Syntax.context ->
+   (Syntax.Symbol.Map.key * Syntax.symbol) list ->
+   'a Syntax.term ->
+   'a Syntax.term array ->
+   int -> 
+   QQ.t array array list -> 
+   Polynomial.QQXs.t array list -> 
+   'a Syntax.formula

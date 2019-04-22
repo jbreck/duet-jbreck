@@ -247,48 +247,91 @@ let mk_height_based_summary bounds recursive_weight =
         (1 -- (CoordinateSystem.dim sub_cs)) in 
       *)  
       let examine_inequation vec negate =
-          let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
-          let term = CoordinateSystem.term_of_vec sub_cs vec in
-          let is_negative q = ((QQ.compare q QQ.zero) < 0) in
-          let is_non_negative q = ((QQ.compare q QQ.zero) >= 0) in
-          let is_at_least_one q = ((QQ.compare q QQ.one) >= 0) in
-          let rec examine_coeff_dim_pair coeff dim accum =
-              if dim == target_outer_dim then 
-                (if is_negative coeff (* Did we get an upper bound on the target dimension? *)
-                  then Some ((coeff,dim)::accum) 
-                  else None)
-              else if dim == target_inner_dim then 
-                (if is_at_least_one coeff
-                  then Some ((coeff,dim)::accum)    
-                  else Some ((QQ.one,dim)::accum))  (* Minimal self-coefficient is one*)
-              else if dim == CoordinateSystem.const_id then
-                (if is_non_negative coeff
-                  then Some ((coeff,dim)::accum)    (* Keep non-negative constants *)
-                  else Some accum)                  (* Drop negative constants *)
-              else 
-                (* The remaining case is a non-target B_in dimension *)
-                None
-                (* In the future, we will change this to allow stratification and
-                   interdependencies *)
-          in 
-          let coeffs_and_dims = Srk.Linear.QQVector.enum vec in 
-          let rec examine_coeffs_and_dims accum = 
-            match BatEnum.get coeffs_and_dims with 
-            | None -> Some accum
-            | Some (coeff,dim) -> 
-              match examine_coeff_dim_pair coeff dim accum with 
-              | None -> None
-              | Some new_accum -> examine_coeffs_and_dims new_accum 
-          in 
-          match examine_coeffs_and_dims [] with 
-          | None -> ()
-          | Some new_coeffs_and_dims -> 
-            Format.printf "  identified recurrence inequation: %a@." 
-                (Srk.Syntax.Term.pp Cra.srk) term;  
-            Format.printf "  before filter: %a @." Linear.QQVector.pp vec;
-            let new_vec = Linear.QQVector.of_list new_coeffs_and_dims in
-            Format.printf "   after filter: %a @." Linear.QQVector.pp new_vec;
-            
+        let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
+        let term = CoordinateSystem.term_of_vec sub_cs vec in
+        let is_negative q = ((QQ.compare q QQ.zero) < 0) in
+        let is_non_negative q = ((QQ.compare q QQ.zero) >= 0) in
+        let is_at_least_one q = ((QQ.compare q QQ.one) >= 0) in
+        let rec examine_coeff_dim_pair coeff dim accum =
+            if dim == target_outer_dim then 
+              (if is_negative coeff (* Did we get an upper bound on the target dimension? *)
+                then Some ((coeff,dim)::accum) 
+                else None)
+            else if dim == target_inner_dim then 
+              (if is_at_least_one coeff
+                then Some ((coeff,dim)::accum)    
+                else Some ((QQ.one,dim)::accum))  (* Minimal self-coefficient is one*)
+            else if dim == CoordinateSystem.const_id then
+              (if is_non_negative coeff
+                then Some ((coeff,dim)::accum)    (* Keep non-negative constants *)
+                else Some accum)                  (* Drop negative constants *)
+            else 
+              (* The remaining case is a non-target B_in dimension *)
+              None
+              (* In the future, we will change this to allow stratification and
+                  interdependencies *)
+        in 
+        let coeffs_and_dims = Srk.Linear.QQVector.enum vec in 
+        let rec examine_coeffs_and_dims accum = 
+          match BatEnum.get coeffs_and_dims with 
+          | None -> Some accum
+          | Some (coeff,dim) -> 
+            match examine_coeff_dim_pair coeff dim accum with 
+            | None -> None
+            | Some new_accum -> examine_coeffs_and_dims new_accum 
+        in 
+        match examine_coeffs_and_dims [] with 
+        | None -> ()
+        | Some new_coeffs_and_dims -> 
+          Format.printf "  identified recurrence inequation: %a@." 
+              (Srk.Syntax.Term.pp Cra.srk) term;  
+          Format.printf "    before filter: %a @." Linear.QQVector.pp vec;
+          let new_vec = Linear.QQVector.of_list new_coeffs_and_dims in
+          Format.printf "     after filter: %a @." Linear.QQVector.pp new_vec;
+          let outer_coeff = QQ.negate ( Linear.QQVector.coeff target_outer_dim new_vec) in 
+          let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
+          let const_coeff = Linear.QQVector.coeff CoordinateSystem.const_id new_vec in 
+          let blk_transform = [| [| QQ.div inner_coeff outer_coeff |] |] in 
+          let blk_add = [| Polynomial.QQXs.scalar (QQ.div const_coeff outer_coeff) |] in 
+
+          (* *) 
+
+          let ineq_tr = [(target_inner_sym, target_outer_sym)] in 
+          let loop_counter_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"K" `TyInt in
+          let loop_counter = Srk.Syntax.mk_const Cra.srk loop_counter_sym in
+          let term_of_id = [| Srk.Syntax.mk_const Cra.srk target_inner_sym |] in (* Maybe put term in here? *)
+          let nb_constants = 0 in 
+
+          (* Change to pairs of transform_add blocks *)
+          (* Add the appropriate constraint to the loop counter, so K >= 0 *)
+          let solution = SolvablePolynomial.exp_ocrs_external 
+                         Cra.srk ineq_tr loop_counter term_of_id 
+                         nb_constants [ blk_transform ] [ blk_add ] in 
+
+          Format.printf "    solution: %a@." 
+              (Srk.Syntax.Formula.pp Cra.srk) solution;  
+          (*
+          *)
+          ()
+           
+          (*
+            let closure iter =
+            let srk = iter.srk in
+            let loop_counter_sym = mk_symbol srk ~name:"K" `TyInt in
+            let loop_counter = mk_const srk loop_counter_sym in
+            mk_and srk [Iter.exp iter.srk iter.tr_symbols loop_counter iter.iter;
+                        mk_leq srk (mk_real srk QQ.zero) loop_counter] 
+          *)
+
+          (* Need to walk over the coeffs and dims and get a block
+              which is so far just a single entry with the B_out_self coeff
+              and a blk_add which is a constant polynomial with the
+              constant term, if it's non-zero, otherwise the blk_add is 0.
+             Also, need to build a term_of_id,
+             need to craft a loop counter
+             need to build tr_symbols of b_in and b_out that I'm using
+             (* *)
+          *)
           (*
             match accum with | None -> None | Some accum_list ->
             match BatEnum.get coeffs_and_dims with 
