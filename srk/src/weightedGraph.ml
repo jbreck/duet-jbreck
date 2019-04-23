@@ -625,11 +625,11 @@ module MakeBottomUpRecGraph (W : Weight) = struct
     in
 
     if CallSet.is_empty calls then
-      (*{ summaries = M.empty;
+      { summaries = M.empty;
         table;
         graph = path_graph;
         context;
-        labels = rg.labels }*) ()
+        labels = rg.labels }
     else begin
       (* call_pathexpr is a map from (s,t) pairs to the path expressions
           of all paths from s to t; in these path expressions, each edge,
@@ -728,8 +728,8 @@ module MakeBottomUpRecGraph (W : Weight) = struct
             summarize_sccs rest
           end
       in
-      summarize_sccs callgraph_sccs
-      (* let query =
+      summarize_sccs callgraph_sccs;
+      let query =
         { summaries = !summaries;
           table;
           graph = path_graph;
@@ -738,11 +738,12 @@ module MakeBottomUpRecGraph (W : Weight) = struct
       in
       (* For each (s,t) call containing a call (s',t'), add an edge from s to s'
          with the path weight from s to call(s',t'). *)
-      CallSet.fold
+      let final_query = (CallSet.fold
         (fun (src, tgt) query' -> add_call_edges query' src)
         calls
-        query
-      *)
+        query)
+      in 
+      final_query
     end
 
     let path_weight query src tgt =

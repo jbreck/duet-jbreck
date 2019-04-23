@@ -161,7 +161,7 @@ module MakeBottomUpRecGraph (W : Weight) : sig
                  W.t label weighted_graph ->
                 (scc -> 
                   (vertex -> vertex -> (int -> int -> int -> int -> W.t) -> W.t) ->
-                ((int * int * W.t) list) ) -> unit
+                ((int * int * W.t) list) ) -> query
 
   val path_weight : query -> vertex -> vertex -> W.t
 end
