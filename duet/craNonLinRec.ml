@@ -222,6 +222,9 @@ let mk_height_based_summary bounds recursive_weight =
     Srk.Syntax.Symbol.Set.mem sym !b_out_symbols in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk full_conjunction in 
   Format.printf "\n  extraction_wedge = @.%t@. \n\n" (fun f -> Wedge.pp f wedge); 
+  (* *)
+  let recurrence_candidates = ref [] in
+  let best_outer_coefficient = ref Srk.Syntax.Symbol.Map.empty in 
   (* There's a need for an outer loop for stratification levels, although we should avoid
      redoing the expensive steps.  *)
   (* *)
@@ -230,22 +233,12 @@ let mk_height_based_summary bounds recursive_weight =
   let direct_recurrence_extraction (target_inner_sym, target_outer_sym) = 
       let targeted_projection sym = 
         sym == target_outer_sym || Srk.Syntax.Symbol.Set.mem sym !b_in_symbols in     
-      (*(List.fold_left (fun found (inner_sym, _) -> 
-          found || inner_sym == x || target_outer_sym == x) false (!b_in_b_out_pairs)) in *)
       let sub_wedge = Wedge.exists targeted_projection wedge in 
       let sub_cs = Wedge.coordinate_system sub_wedge in
       let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
       let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
       let target_vec = CoordinateSystem.vec_of_term sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym) in 
-      (*
-      let get_admissible_recurrence vec allow_stratified = BatEnum.fold (fun newvec dim ->
-          if 
-          if dim == target_inner_dim then 
-          Srk.Linear.QQVector.coeff dim
-          newvec
-        Some vec
-        (1 -- (CoordinateSystem.dim sub_cs)) in 
-      *)  
+      (* *)  
       let examine_inequation vec negate =
         let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
         let term = CoordinateSystem.term_of_vec sub_cs vec in
@@ -293,28 +286,90 @@ let mk_height_based_summary bounds recursive_weight =
           let const_coeff = Linear.QQVector.coeff CoordinateSystem.const_id new_vec in 
           let blk_transform = [| [| QQ.div inner_coeff outer_coeff |] |] in 
           let blk_add = [| Polynomial.QQXs.scalar (QQ.div const_coeff outer_coeff) |] in 
-
-          (* *) 
-
+          recurrence_candidates := (target_outer_sym,
+                                    target_inner_sym,
+                                    outer_coeff, 
+                                    blk_transform,
+                                    blk_add) :: (!recurrence_candidates);
+          let old_coeff = Srk.Syntax.Symbol.Map.find_default 
+            (QQ.add outer_coeff QQ.one) 
+            target_inner_sym 
+            !best_outer_coefficient in 
+          if (QQ.compare outer_coeff old_coeff) <= 0 then 
+            best_outer_coefficient := 
+              Srk.Syntax.Symbol.Map.add 
+              target_outer_sym 
+              outer_coeff 
+              !best_outer_coefficient;
+          (* *)
+          (*
           let ineq_tr = [(target_inner_sym, target_outer_sym)] in 
           let loop_counter_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"K" `TyInt in
           let loop_counter = Srk.Syntax.mk_const Cra.srk loop_counter_sym in
           let term_of_id = [| Srk.Syntax.mk_const Cra.srk target_inner_sym |] in (* Maybe put term in here? *)
           let nb_constants = 0 in 
-
           (* Change to pairs of transform_add blocks *)
           (* Add the appropriate constraint to the loop counter, so K >= 0 *)
           let solution = SolvablePolynomial.exp_ocrs_external 
                          Cra.srk ineq_tr loop_counter term_of_id 
                          nb_constants [ blk_transform ] [ blk_add ] in 
-
+          (* *)
           Format.printf "    solution: %a@." 
-              (Srk.Syntax.Formula.pp Cra.srk) solution;  
-          (*
-          *)
+              (Srk.Syntax.Formula.pp Cra.srk) solution; *)
           ()
            
-          (*
+          in
+      let process_constraint = function 
+        | (`Eq, vec) ->  examine_inequation vec true; examine_inequation vec false
+        | (`Geq, vec) -> examine_inequation vec false 
+        in 
+      List.iter process_constraint (Wedge.polyhedron sub_wedge) 
+        in
+  List.iter direct_recurrence_extraction (!b_in_b_out_pairs);
+  (* *)
+  ();
+  (* let done_symbols = ref Srk.Syntax.Symbol.Map.empty in *)
+
+  (* Build up a matrix recurrence to give to OCRS *)
+  (* let matrix_recurrence = build_matrix_recurrence *)
+  (* List.iter !best_outer_coefficient *)
+  
+  let handle_candidate 
+    (done_symbols,ineq_tr,blk_transforms,blk_adds,term_of_id) 
+    (target_outer_sym,target_inner_sym,outer_coeff,blk_transform,blk_add) = 
+    if not (Srk.Syntax.Symbol.Set.mem target_outer_sym done_symbols) &&
+      (QQ.equal outer_coeff
+       (Srk.Syntax.Symbol.Map.find target_outer_sym !best_outer_coefficient))
+    then 
+      (Srk.Syntax.Symbol.Set.add target_outer_sym done_symbols,
+       (target_inner_sym, target_outer_sym)::ineq_tr,
+       blk_transform::blk_transforms,
+       blk_add::blk_adds,
+       (Srk.Syntax.mk_const Cra.srk target_inner_sym)::term_of_id) 
+    else 
+      (done_symbols,ineq_tr,blk_transforms,blk_adds,term_of_id) in 
+  let done_symbols,ineq_tr,blk_transforms,blk_adds,term_of_id =
+    List.fold_left handle_candidate 
+      (Srk.Syntax.Symbol.Set.empty, [],[],[],[]) !recurrence_candidates in 
+  let term_of_id = Array.of_list (List.rev term_of_id) in 
+  let loop_counter_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"K" `TyInt in
+  let loop_counter = Srk.Syntax.mk_const Cra.srk loop_counter_sym in
+  let nb_constants = 0 in 
+  (* Change to pairs of transform_add blocks *)
+  (* Add the appropriate constraint to the loop counter, so K >= 0 *)
+  let solution = SolvablePolynomial.exp_ocrs_external 
+                  Cra.srk ineq_tr loop_counter term_of_id 
+                  nb_constants blk_transforms blk_adds in 
+  Format.printf "@.    solution: %a@." 
+      (Srk.Syntax.Formula.pp Cra.srk) solution
+  (* *)
+    
+
+
+
+    
+
+(*
             let closure iter =
             let srk = iter.srk in
             let loop_counter_sym = mk_symbol srk ~name:"K" `TyInt in
@@ -381,16 +436,8 @@ let mk_height_based_summary bounds recursive_weight =
             (* Note: divide everything by B_out's coefficient *)
             () 
             end  
-          else ()) *) in
-      let process_constraint = function 
-        | (`Eq, vec) ->  examine_inequation vec true; examine_inequation vec false
-        | (`Geq, vec) -> examine_inequation vec false 
-        in 
-      List.iter process_constraint (Wedge.polyhedron sub_wedge) 
-        in
-  List.iter direct_recurrence_extraction (!b_in_b_out_pairs);
-  (* *)
-  ()
+          else ()) *) 
+
   (*  - Create B_out variables
       - Associate each B_out variable to the appropriate outer-call term
       ? How do I get things connected properly to pre- and post- variables?
