@@ -312,9 +312,10 @@ let mk_height_based_summary
             (if is_non_negative coeff
               then Some ((coeff,dim)::accum)    (* Keep non-negative constants *)
               else Some accum)                  (* Drop negative constants *)
-            else 
+          else 
             (* The remaining cases involve non-target B_ins or 
               non-trivial terms over the target B_in *)
+            (* We currently do not extract such recurrences *)
             None
             (* In the future, we will change this to allow stratification,
                 monomials, and interdependencies *)
@@ -393,7 +394,6 @@ let mk_height_based_summary
     (* *)
     (* Don't extract more than one recurrence for each symbol *)
     let process_candidate_recurrence 
-      (* (done_symbols,ineq_tr,blk_transforms,blk_adds,rev_term_of_id) *)
       recurrences
       (target_outer_sym,target_inner_sym,outer_coeff,blk_transform,blk_add) = 
       if not (Srk.Syntax.Symbol.Map.mem target_inner_sym recurrences.done_symbols) &&
@@ -402,20 +402,10 @@ let mk_height_based_summary
       then (* Do extract *)
         add_recurrence_to_collection
           target_inner_sym target_outer_sym blk_transform blk_add recurrences
-      (*let new_num = (Srk.Syntax.Symbol.Map.cardinal done_symbols) + 1 in 
-        (Srk.Syntax.Symbol.Map.add target_inner_sym new_num done_symbols,
-        (target_inner_sym, target_outer_sym)::ineq_tr,
-        blk_transform::blk_transforms,
-        blk_add::blk_adds,
-        (Srk.Syntax.mk_const Cra.srk target_inner_sym)::rev_term_of_id)*)
       else (* Don't extract *)
         recurrences in 
-        (* (done_symbols,ineq_tr,blk_transforms,blk_adds,rev_term_of_id) in *)
-    (* done_symbols,ineq_tr,blk_transforms,blk_adds,rev_term_of_id = *)
     let recurrences = 
       List.fold_left process_candidate_recurrence
-        (*(Srk.Syntax.Symbol.Map.empty, [],[],[],[]) *)
-        (* empty_recurrence_collection *)
         recurrences
         !recurrence_candidates in 
     Format.printf "  [ -- end of stratum -- ]@.";
@@ -428,7 +418,6 @@ let mk_height_based_summary
   let recurrences = extract_stratified empty_recurrence_collection in 
   (* *)
   let term_of_id = Array.of_list (List.rev recurrences.rev_term_of_id) in 
-  (*let loop_counter_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"K" `TyInt in*)
   let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
   let nb_constants = 0 in 
   (* Change to pairs of transform_add blocks *)
@@ -441,7 +430,6 @@ let mk_height_based_summary
   Format.printf "@.    solution: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) solution;
   (* *)
-  (* let simpler = SrkSimplify.simplify_terms Cra.srk with_zeros *)
   let subst_b_in_with_zeros sym = 
     if Srk.Syntax.Symbol.Set.mem sym !b_in_symbols 
     then Srk.Syntax.mk_real Cra.srk QQ.zero 
