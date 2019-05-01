@@ -151,6 +151,39 @@ let mk_call_abstraction base_case_weight =
      recursion_flag = rec_flag_val; 
      call_abstraction = K.mul set_rec_flag call_abstraction_weight}
 
+type 'a recurrence_collection = {
+  done_symbols: int Srk.Syntax.Symbol.Map.t;
+  ineq_tr: (Srk.Syntax.Symbol.Map.key * Srk.Syntax.Symbol.Map.key) list;
+  blk_transforms: Srk.QQ.t array array list;
+  blk_adds: Srk.Polynomial.QQXs.t array list;
+  rev_term_of_id: ((Cra.Ctx.t, 'a) Srk.Syntax.expr) list
+}
+
+let add_recurrence_to_collection
+ target_inner_sym target_outer_sym blk_transform blk_add
+ recurrences =
+  let new_num = (Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols) + 1 in 
+   {done_symbols = Srk.Syntax.Symbol.Map.add target_inner_sym new_num recurrences.done_symbols;
+    ineq_tr = (target_inner_sym, target_outer_sym)::recurrences.ineq_tr;
+    blk_transforms = blk_transform::recurrences.blk_transforms;
+    blk_adds = blk_add::recurrences.blk_adds;
+    rev_term_of_id = (Srk.Syntax.mk_const Cra.srk target_inner_sym)::recurrences.rev_term_of_id}
+  (*(Srk.Syntax.Symbol.Map.add target_inner_sym new_num recurrences.done_symbols,
+    (target_inner_sym, target_outer_sym)::recurrences.ineq_tr,
+    blk_transform::recurrences.blk_transforms,
+    blk_add::recurrences.blk_adds,
+    (Srk.Syntax.mk_const Cra.srk target_inner_sym)::recurrences.rev_term_of_id)*)
+
+let empty_recurrence_collection = 
+  {done_symbols = Srk.Syntax.Symbol.Map.empty;
+    ineq_tr = [];
+    blk_transforms = [];
+    blk_adds = [];
+    rev_term_of_id = []}
+
+let count_recurrences recurrences = 
+  Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols
+
 let mk_height_based_summary 
   bounds recursive_weight top_down_summary ht_var_sym program_vars base top =  
   (* FIXME add a base case to the top_down? *)
@@ -205,108 +238,196 @@ let mk_height_based_summary
   (* *)
   let recurrence_candidates = ref [] in
   let best_outer_coefficient = ref Srk.Syntax.Symbol.Map.empty in 
+  (* 
+      CHANGES NEEDED:
+        * do wedge projections once only, not multiple times
+        * keep track of successfully extracted Bs and their MR dimensions
+            so, we need to build a map from Bs to MR dimensions
+        * have a loop that iterates until no more recurrences are extracted
+        * prepare for a future interdependence-extractor
+  *)
+  (* let target_vec = CoordinateSystem.vec_of_term sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym) in *)
+  (* For each outer bounding symbol (B_out), project the wedge down to that outer
+       symbol and all inner bounding symbols *)
+  (* Note: we do all projections together, before the stratum-loop *)
+  (* Change this to iterate over b_in_symbols, maybe? *)
+  let wedge_map = 
+    let add_wedge_to_map map (target_inner_sym, _) = 
+      let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym !b_in_b_out_map in
+      let targeted_projection sym = 
+        sym == target_outer_sym || Srk.Syntax.Symbol.Set.mem sym !b_in_symbols in 
+      (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
+      let sub_wedge = Wedge.exists targeted_projection wedge in 
+      Srk.Syntax.Symbol.Map.add target_inner_sym sub_wedge map in 
+    List.fold_left 
+      add_wedge_to_map 
+      Srk.Syntax.Symbol.Map.empty
+      bounds.bound_pairs in 
+  (* *)
+  let is_negative q = ((QQ.compare q QQ.zero) < 0) in
+  let is_non_negative q = ((QQ.compare q QQ.zero) >= 0) in
+  let is_at_least_one q = ((QQ.compare q QQ.one) >= 0) in
   (* There's a need for an outer loop for stratification levels, although we 
     should avoid redoing the expensive steps.  *)
   (* *)
   (* Obviously, these loops could have a simpler, faster structure... *)
-  let direct_recurrence_extraction (target_inner_sym, _) = 
-    let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym !b_in_b_out_map in
-    let targeted_projection sym = 
-      sym == target_outer_sym || Srk.Syntax.Symbol.Set.mem sym !b_in_symbols in     
-    let sub_wedge = Wedge.exists targeted_projection wedge in 
-    let sub_cs = Wedge.coordinate_system sub_wedge in
-    let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
-    let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
-    (* let target_vec = CoordinateSystem.vec_of_term sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym) in *)
-    (* *)  
-    let examine_inequation vec negate =
-      let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
-      let term = CoordinateSystem.term_of_vec sub_cs vec in
-      let is_negative q = ((QQ.compare q QQ.zero) < 0) in
-      let is_non_negative q = ((QQ.compare q QQ.zero) >= 0) in
-      let is_at_least_one q = ((QQ.compare q QQ.one) >= 0) in
-      let rec examine_coeff_dim_pair coeff dim accum =
-        if dim == target_outer_dim then 
-          (if is_negative coeff (* Did we get an upper bound on the target dimension? *)
-            then Some ((coeff,dim)::accum) 
-            else None)
-        else if dim == target_inner_dim then 
-          (if is_at_least_one coeff
-            then Some ((coeff,dim)::accum)    
-            else Some ((QQ.one,dim)::accum))  (* Minimal self-coefficient is one*)
-        else if dim == CoordinateSystem.const_id then
-          (if is_non_negative coeff
-            then Some ((coeff,dim)::accum)    (* Keep non-negative constants *)
-            else Some accum)                  (* Drop negative constants *)
-        else 
-          (* The remaining case is a non-target B_in dimension *)
-          None
-          (* In the future, we will change this to allow stratification and
-              interdependencies *)
-      in 
-      let coeffs_and_dims = Srk.Linear.QQVector.enum vec in 
-      let rec examine_coeffs_and_dims accum = 
-        match BatEnum.get coeffs_and_dims with 
-        | None -> Some accum
-        | Some (coeff,dim) -> 
-          match examine_coeff_dim_pair coeff dim accum with 
-          | None -> None
-          | Some new_accum -> examine_coeffs_and_dims new_accum 
-      in 
-      match examine_coeffs_and_dims [] with 
-      | None -> ()
-      | Some new_coeffs_and_dims -> 
-        Format.printf "  identified recurrence inequation: %a@." 
-            (Srk.Syntax.Term.pp Cra.srk) term;  
-        Format.printf "    before filter: %a @." Linear.QQVector.pp vec;
-        let new_vec = Linear.QQVector.of_list new_coeffs_and_dims in
-        Format.printf "     after filter: %a @." Linear.QQVector.pp new_vec;
-        let outer_coeff = QQ.negate ( Linear.QQVector.coeff target_outer_dim new_vec) in 
-        let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
-        let const_coeff = Linear.QQVector.coeff CoordinateSystem.const_id new_vec in 
-        let blk_transform = [| [| QQ.div inner_coeff outer_coeff |] |] in 
-        let blk_add = [| Polynomial.QQXs.scalar (QQ.div const_coeff outer_coeff) |] in 
-        recurrence_candidates := (target_outer_sym,
-                                  target_inner_sym,
-                                  outer_coeff, 
-                                  blk_transform,
-                                  blk_add) :: (!recurrence_candidates);
-        let old_coeff = Srk.Syntax.Symbol.Map.find_default 
-          (QQ.add outer_coeff QQ.one) 
-          target_inner_sym 
-          !best_outer_coefficient in 
-        if (QQ.compare outer_coeff old_coeff) <= 0 then 
-          best_outer_coefficient := 
-            Srk.Syntax.Symbol.Map.add 
-            target_outer_sym 
-            outer_coeff 
-            !best_outer_coefficient
-      in
-    let process_constraint = function 
-      | (`Eq, vec) ->  examine_inequation vec true; examine_inequation vec false
-      | (`Geq, vec) -> examine_inequation vec false in 
-    List.iter process_constraint (Wedge.polyhedron sub_wedge) 
-    in
-  List.iter direct_recurrence_extraction bounds.bound_pairs;
   (* *)
-  let handle_candidate 
-    (done_symbols,ineq_tr,blk_transforms,blk_adds,term_of_id) 
-    (target_outer_sym,target_inner_sym,outer_coeff,blk_transform,blk_add) = 
-    if not (Srk.Syntax.Symbol.Set.mem target_outer_sym done_symbols) &&
-      (QQ.equal outer_coeff
-       (Srk.Syntax.Symbol.Map.find target_outer_sym !best_outer_coefficient))
-    then 
-      (Srk.Syntax.Symbol.Set.add target_outer_sym done_symbols,
-       (target_inner_sym, target_outer_sym)::ineq_tr,
-       blk_transform::blk_transforms,
-       blk_add::blk_adds,
-       (Srk.Syntax.mk_const Cra.srk target_inner_sym)::term_of_id) 
-    else 
-      (done_symbols,ineq_tr,blk_transforms,blk_adds,term_of_id) in 
-  let done_symbols,ineq_tr,blk_transforms,blk_adds,term_of_id =
-    List.fold_left handle_candidate 
-      (Srk.Syntax.Symbol.Set.empty, [],[],[],[]) !recurrence_candidates in 
-  let term_of_id = Array.of_list (List.rev term_of_id) in 
+  let rec extract_stratified recurrences = 
+    begin
+    let nb_previous_recurrences = count_recurrences recurrences in 
+    (* Change this to iterate over b_in_symbols, maybe? *)
+    (* This function will be applied to each B_in symbol *) 
+    let direct_recurrence_extraction (target_inner_sym, _) = 
+      if Srk.Syntax.Symbol.Map.mem target_inner_sym recurrences.done_symbols then () else begin
+      let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym !b_in_b_out_map in
+      let sub_wedge = Srk.Syntax.Symbol.Map.find target_inner_sym wedge_map in 
+      let sub_cs = Wedge.coordinate_system sub_wedge in
+      let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
+      let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
+      let sub_dim_to_rec_num = 
+        Srk.Syntax.Symbol.Map.fold
+         (fun sym recurrence_number old_map -> 
+           let sub_dim = (CoordinateSystem.cs_term_id sub_cs (`App (sym, []))) in 
+           BatMap.Int.add sub_dim recurrence_number old_map)
+         recurrences.done_symbols
+         BatMap.Int.empty
+        in 
+      (* *) 
+      (* This function will be applied to each inequation in sub_wedge *)
+      let process_inequation vec negate =
+        let rec examine_coeff_dim_pair coeff dim accum =
+          if dim == target_outer_dim then (* ------------------- TARGET B_OUT *)
+            (if is_negative coeff (* Did we get an upper bound on the target dimension? *)
+              then Some ((coeff,dim)::accum) 
+              else None)
+          else if dim == target_inner_dim then (* --------------- TARGET B_IN *)
+            (if is_at_least_one coeff
+              then Some ((coeff,dim)::accum)    
+              else Some ((QQ.one,dim)::accum))  (* Minimal self-coefficient is one*)
+          else if dim == CoordinateSystem.const_id then (* --------- CONSTANT *)
+            (if is_non_negative coeff
+              then Some ((coeff,dim)::accum)    (* Keep non-negative constants *)
+              else Some accum)                  (* Drop negative constants *)
+          else if BatMap.Int.mem dim sub_dim_to_rec_num then (* LOWER STRATUM *)
+            (if is_non_negative coeff
+              then Some ((coeff,dim)::accum)    (* Keep non-negative constants *)
+              else Some accum)                  (* Drop negative constants *)
+            else 
+            (* The remaining cases involve non-target B_ins or 
+              non-trivial terms over the target B_in *)
+            None
+            (* In the future, we will change this to allow stratification,
+                monomials, and interdependencies *)
+            (* The dual-height analysis will also have to do this differently *)
+        in 
+        let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
+        let term = CoordinateSystem.term_of_vec sub_cs vec in 
+        let coeffs_and_dims = Srk.Linear.QQVector.enum vec in 
+        let rec examine_coeffs_and_dims accum = 
+          match BatEnum.get coeffs_and_dims with 
+          | None -> Some accum
+          | Some (coeff,dim) -> 
+            match examine_coeff_dim_pair coeff dim accum with 
+            | None -> None
+            | Some new_accum -> examine_coeffs_and_dims new_accum in 
+        match examine_coeffs_and_dims [] with 
+        | None -> ()
+        | Some new_coeffs_and_dims -> 
+          let new_vec = Linear.QQVector.of_list new_coeffs_and_dims in
+          let outer_coeff = QQ.negate (Linear.QQVector.coeff target_outer_dim new_vec) in 
+          (* Drop any inequations that don't even mention the target B_out *)
+          if QQ.equal QQ.zero outer_coeff then () else 
+          begin 
+          (* We've identified a recurrence; now we'll put together the data 
+            structures we'll need to solve it.  *)
+          Format.printf "  identified recurrence inequation: %a@." 
+              (Srk.Syntax.Term.pp Cra.srk) term;  
+          Format.printf "    before filter: %a @." Linear.QQVector.pp vec;
+          Format.printf "     after filter: %a @." Linear.QQVector.pp new_vec;
+          let one_over_outer_coeff = QQ.inverse outer_coeff in 
+          let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
+          let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
+          let blk_transform = [| [| inner_coeff |] |] in 
+          (* Now process a constant offset *)
+          let const_coeff = Linear.QQVector.coeff CoordinateSystem.const_id new_vec in 
+          let const_add_poly = Polynomial.QQXs.scalar const_coeff in 
+          (* Eventually I need to process possible terms over this B_in *)
+          (* Now I will process lower-strata dimensions *)
+          let lower_strata_polynomial = 
+            List.fold_left
+            (fun poly (coeff,dim) -> 
+              if BatMap.Int.mem dim sub_dim_to_rec_num 
+              then
+                let rec_num = BatMap.Int.find dim sub_dim_to_rec_num in 
+                let monomial = (Polynomial.Monomial.singleton rec_num 1) in 
+                (* Currently, this hard-codes linear (power 1) usage of lower-strata B_ins *)
+                Polynomial.QQXs.add_term coeff monomial poly
+              else poly)
+            const_add_poly
+            new_coeffs_and_dims in 
+          let blk_add = [| lower_strata_polynomial |] in 
+          recurrence_candidates := (target_outer_sym,
+                                    target_inner_sym,
+                                    outer_coeff, 
+                                    blk_transform,
+                                    blk_add) :: (!recurrence_candidates);
+          let old_coeff = Srk.Syntax.Symbol.Map.find_default 
+            (QQ.add outer_coeff QQ.one) 
+            target_inner_sym 
+            !best_outer_coefficient in 
+          if (QQ.compare outer_coeff old_coeff) <= 0 then 
+            best_outer_coefficient := 
+              Srk.Syntax.Symbol.Map.add 
+              target_outer_sym 
+              outer_coeff 
+              !best_outer_coefficient
+          end 
+        in
+      let process_constraint = function 
+        | (`Eq, vec) ->  process_inequation vec true; process_inequation vec false
+        | (`Geq, vec) -> process_inequation vec false in 
+      List.iter process_constraint (Wedge.polyhedron sub_wedge) 
+      end 
+      in
+    List.iter direct_recurrence_extraction bounds.bound_pairs;
+    (* *)
+    (* Don't extract more than one recurrence for each symbol *)
+    let process_candidate_recurrence 
+      (* (done_symbols,ineq_tr,blk_transforms,blk_adds,rev_term_of_id) *)
+      recurrences
+      (target_outer_sym,target_inner_sym,outer_coeff,blk_transform,blk_add) = 
+      if not (Srk.Syntax.Symbol.Map.mem target_inner_sym recurrences.done_symbols) &&
+        (QQ.equal outer_coeff
+        (Srk.Syntax.Symbol.Map.find target_outer_sym !best_outer_coefficient))
+      then (* Do extract *)
+        add_recurrence_to_collection
+          target_inner_sym target_outer_sym blk_transform blk_add recurrences
+      (*let new_num = (Srk.Syntax.Symbol.Map.cardinal done_symbols) + 1 in 
+        (Srk.Syntax.Symbol.Map.add target_inner_sym new_num done_symbols,
+        (target_inner_sym, target_outer_sym)::ineq_tr,
+        blk_transform::blk_transforms,
+        blk_add::blk_adds,
+        (Srk.Syntax.mk_const Cra.srk target_inner_sym)::rev_term_of_id)*)
+      else (* Don't extract *)
+        recurrences in 
+        (* (done_symbols,ineq_tr,blk_transforms,blk_adds,rev_term_of_id) in *)
+    (* done_symbols,ineq_tr,blk_transforms,blk_adds,rev_term_of_id = *)
+    let recurrences = 
+      List.fold_left process_candidate_recurrence
+        (*(Srk.Syntax.Symbol.Map.empty, [],[],[],[]) *)
+        (* empty_recurrence_collection *)
+        recurrences
+        !recurrence_candidates in 
+    Format.printf "  [ -- end of stratum -- ]@.";
+    (* Did we get new recurrences? If so, then look for a higher stratum. *)
+    if count_recurrences recurrences > nb_previous_recurrences then 
+      extract_stratified recurrences
+    else recurrences 
+    end 
+    in 
+  let recurrences = extract_stratified empty_recurrence_collection in 
+  (* *)
+  let term_of_id = Array.of_list (List.rev recurrences.rev_term_of_id) in 
   (*let loop_counter_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"K" `TyInt in*)
   let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
   let nb_constants = 0 in 
@@ -314,8 +435,9 @@ let mk_height_based_summary
   (* Add the appropriate constraint to the loop counter, so K >= 0 *)
   (* Send the matrix recurrence to OCRS and obtain a solution *)
   let solution = SolvablePolynomial.exp_ocrs_external 
-                  Cra.srk ineq_tr loop_counter term_of_id 
-                  nb_constants blk_transforms blk_adds in 
+                  Cra.srk recurrences.ineq_tr loop_counter term_of_id 
+                  nb_constants recurrences.blk_transforms 
+                  recurrences.blk_adds in 
   Format.printf "@.    solution: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) solution;
   (* *)
