@@ -684,7 +684,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
             call_pathexpr
             CallGraph.empty (* initial_callgraph *) (* Use CallGraph.empty here? *)
         in      
-        CallGraphSCCs.scc_list callgraph (* = callgraph_sccs *)
+        List.rev (CallGraphSCCs.scc_list callgraph) (* = callgraph_sccs *)
         in 
       let summaries = ref (M.map (fun _ -> W.zero) call_pathexpr) in
       let rec summarize_sccs scc_list =
@@ -723,8 +723,8 @@ module MakeBottomUpRecGraph (W : Weight) = struct
             let new_summary_list = summarizer this_scc path_weight_internal
             in
             List.iter (fun (s, t, summary) -> 
-                    summaries := M.add (s,t) summary (!summaries) ) 
-                   new_summary_list;
+                    summaries := M.add (s,t) summary !summaries) 
+              new_summary_list;
             summarize_sccs rest
           end
       in
@@ -747,6 +747,9 @@ module MakeBottomUpRecGraph (W : Weight) = struct
     end
 
     let path_weight query src tgt =
+      if M.mem (src, tgt) query.summaries then 
+        M.find (src, tgt) query.summaries 
+      else
       (* For each (s,t) call edge reachable from src, add corresponding edge
          from src to s with the path weight from src to s *)
       let query' = add_call_edges query src in
@@ -757,6 +760,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
             | Call (en, ex) -> M.find (en, ex) query'.summaries)
       in
       path_weight query'.graph src tgt
-      |> eval ~table:query.table weight
+      |> eval weight
+      (*|> eval ~table:query.table weight*)
   
 end

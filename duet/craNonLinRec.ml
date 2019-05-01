@@ -324,11 +324,11 @@ let mk_height_based_summary
     if Srk.Syntax.Symbol.Set.mem sym !b_in_symbols 
     then Srk.Syntax.mk_real Cra.srk QQ.zero 
     else Srk.Syntax.mk_const Cra.srk sym in 
-  let with_zeros = 
+  let solution_starting_at_zero = 
     Srk.Syntax.substitute_const Cra.srk subst_b_in_with_zeros solution in 
   (* let simpler = SrkSimplify.simplify_terms Cra.srk with_zeros in *)
   Format.printf "@.    simplified: %a@." 
-      (Srk.Syntax.Formula.pp Cra.srk) with_zeros;
+      (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;
   let bounding_conjunction = 
     let make_bounding_conjuncts (in_sym,term) =
       let out_sym = Srk.Syntax.Symbol.Map.find in_sym !b_in_b_out_map in 
@@ -343,7 +343,7 @@ let mk_height_based_summary
       (Srk.Syntax.Formula.pp Cra.srk) bounding_conjunction; 
   let big_conjunction = 
     Srk.Syntax.mk_and Cra.srk [top_down_formula; 
-                               with_zeros;
+                               solution_starting_at_zero;
                                bounding_conjunction] in
   Format.printf "@.    big conj: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) big_conjunction; 
@@ -376,16 +376,18 @@ let mk_height_based_summary
         (by putting them into the transform) *)
 ;;
 
-let make_top_down_summary (ts : Cra.K.t Cra.label Cra.WG.t) p_entry pathexpr path_weight_internal top = 
-  let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
-  let height_var_val = Cra.VVal height_var in 
-  let height_var_sym = Cra.V.symbol_of height_var_val in 
-  let set_height_zero = assign_value_to_literal height_var_val 0 in 
-  let increment_height = increment_variable height_var_val in 
+let scc_mem (scc:BURG.scc) en ex = 
+  List.fold_left (fun found (p_entry,p_exit,pathexpr) -> 
+    found || (p_entry == en && p_exit = ex)) false scc.procs;;
+
+let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.scc) = 
   let pe_call_edge_set = function
     | `Edge (s, t) ->
       begin match WeightedGraph.edge_weight ts s t with
-        | Call (en, ex) -> IntPairSet.singleton (s,t)
+        | Call (en, ex) -> 
+          if scc_mem scc en ex 
+          then IntPairSet.singleton (s,t)
+          else IntPairSet.empty
         | _ -> IntPairSet.empty
       end
     | `Mul (x, y) | `Add (x, y) -> IntPairSet.union x y
@@ -396,6 +398,14 @@ let make_top_down_summary (ts : Cra.K.t Cra.label Cra.WG.t) p_entry pathexpr pat
   Format.printf "  calls = [ ";
   IntPairSet.iter (fun (s,t) -> Format.printf "(%d,%d) " s t) call_edges;
   Format.printf "]\n";
+  call_edges
+
+let make_top_down_summary p_entry path_weight_internal top call_edges = 
+  let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
+  let height_var_val = Cra.VVal height_var in 
+  let height_var_sym = Cra.V.symbol_of height_var_val in 
+  let set_height_zero = assign_value_to_literal height_var_val 0 in 
+  let increment_height = increment_variable height_var_val in 
   let weight_of_call_top cs ct cen cex = project top in 
   Format.printf "  fragments = [";
   let sum_of_fragments = IntPairSet.fold (fun (s,t) running_total -> 
@@ -419,16 +429,42 @@ let analyze_nonlinrec file =
   | [main] -> begin
     let rg = Interproc.make_recgraph file in
     let (ts, assertions) = Cra.make_transition_system rg in
-      (* let open CfgIr in let file = get_gfile() in *)
-    let program_vars = (List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) file.vars) in 
+    let program_vars = 
+      let open CfgIr in let file = get_gfile() in
+      List.iter (fun vi -> (Format.printf "       var %t @." (fun f -> Varinfo.pp f vi))) file.vars; 
+      (* let vars = List.filter (fun vi -> not (CfgIr.defined_function vi file)) file.vars in *)
+      (*let vars = List.filter (fun vi -> 
+        match Core.Varinfo.get_type vi with 
+        | Concrete ctyp ->
+          (match ctyp with 
+           | Func (_,_) -> false 
+           | _ -> true ) 
+        | _ -> true ) file.vars in *)
+      let never_addressed_functions = 
+        List.filter (fun f -> not (Varinfo.addr_taken f.fname)) file.funcs in 
+      let vars = List.filter (fun vi -> 
+        (not (Varinfo.is_global vi)) 
+        || 
+        let vname = Varinfo.show vi in 
+        not (List.fold_left (fun found f -> (found || ((Varinfo.show f.fname) = vname)))
+          false 
+          never_addressed_functions
+        )) file.vars in 
+  
+      List.iter (fun vi -> (Format.printf "  true var %t @." (fun f -> Varinfo.pp f vi))) vars; 
+      List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in 
     let top = K.havoc program_vars in 
     let summarizer (scc : BURG.scc) path_weight_internal = 
       Format.printf "I saw an SCC:\n";
       List.iter (fun (u,v,p) -> (Format.printf "  Proc(%d,%d) = %t \n" u v (fun f -> Pathexpr.pp f p))) scc.procs;
       let summaries = List.map (fun (p_entry,p_exit,pathexpr) ->
-        let (top_down_summary, ht_var_sym) = 
-          make_top_down_summary ts p_entry pathexpr path_weight_internal top in
         let weight_of_call_zero cs ct cen cex = K.zero in
+        let call_edges = find_recursive_calls ts pathexpr scc in 
+        if IntPairSet.cardinal call_edges = 0 then 
+          (p_entry,p_exit, project (path_weight_internal p_entry p_exit weight_of_call_zero))
+        else 
+        let (top_down_summary, ht_var_sym) = 
+          make_top_down_summary p_entry path_weight_internal top call_edges in
         let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in
         Format.printf "  base_case = [";
         print_indented 15 base_case_weight;
@@ -472,9 +508,15 @@ let analyze_nonlinrec file =
         | None -> false
       in
       RG.blocks rg |> BatEnum.iter (fun procedure ->
+          Format.printf "==== Summarizing another procedure ====\n";
           let entry = (RG.block_entry rg procedure).did in
           let exit = (RG.block_exit rg procedure).did in
           let summary = BURG.path_weight query entry exit in
+
+          Format.printf "@.       PH_summary = ";
+          print_indented 17 summary;
+          Format.printf "\n";
+
           if K.mem_transform cost summary then begin
             logf ~level:`always "Procedure: %a" Varinfo.pp procedure;
             (* replace cost with 0, add constraint cost = rhs *)
@@ -495,16 +537,16 @@ let analyze_nonlinrec file =
             | `Sat (lower, upper) ->
               begin match lower with
                 | Some lower ->
-                  logf ~level:`always "%a <= cost" (Syntax.Term.pp Cra.srk) lower;
-                  logf ~level:`always "%a is o(%a)"
+                  logf ~level:`always " %a <= cost" (Syntax.Term.pp Cra.srk) lower;
+                  logf ~level:`always " %a is o(%a)"
                     Varinfo.pp procedure
                     BigO.pp (BigO.of_term Cra.srk lower)
                 | None -> ()
               end;
               begin match upper with
                 | Some upper ->
-                  logf ~level:`always "cost <= %a" (Syntax.Term.pp Cra.srk) upper;
-                  logf ~level:`always "%a is O(%a)"
+                  logf ~level:`always " cost <= %a" (Syntax.Term.pp Cra.srk) upper;
+                  logf ~level:`always " %a is O(%a)"
                   Varinfo.pp procedure
                   BigO.pp (BigO.of_term Cra.srk upper)
                 | None -> ()
