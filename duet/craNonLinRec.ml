@@ -216,12 +216,12 @@ let mk_height_based_summary
     let lhs = Srk.Syntax.mk_const Cra.srk outer_sym in 
     (*let lhs = Srk.Syntax.mk_const Cra.srk sym in *) 
     let rhs = term in 
-    let equation = Srk.Syntax.mk_eq Cra.srk lhs rhs in 
+    let b_out_constraint = Srk.Syntax.mk_leq Cra.srk lhs rhs in (* was: mk_eq *)
     Format.printf "  bounded term: %a ~ %t ~ %t @." 
       (Srk.Syntax.Term.pp Cra.srk) term
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym);
-    b_out_definitions := equation :: (!b_out_definitions);
+    b_out_definitions := b_out_constraint :: (!b_out_definitions);
     b_in_b_out_pairs := (inner_sym, outer_sym) :: (!b_in_b_out_pairs);
     b_in_b_out_map := Srk.Syntax.Symbol.Map.add inner_sym outer_sym !b_in_b_out_map;
     b_in_symbols  := Srk.Syntax.Symbol.Set.add inner_sym (!b_in_symbols);
@@ -457,6 +457,8 @@ let mk_height_based_summary
                                bounding_conjunction] in
   Format.printf "@.    big conj: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) big_conjunction; 
+  (* FIXME: I should really be iterating over the SCC footprint variables,
+            not over the list of all program variables. *)
   let final_tr_symbols = 
     List.map (fun var -> 
       let pre_sym = Cra.V.symbol_of var in 
