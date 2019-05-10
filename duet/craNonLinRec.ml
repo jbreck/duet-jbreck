@@ -246,7 +246,7 @@ let mk_height_based_summary
   Format.printf "\n  extraction_wedge = @.%t@. \n\n" (fun f -> Wedge.pp f wedge); 
   (* *)
   let recurrence_candidates = ref [] in
-  let best_outer_coefficient = ref Srk.Syntax.Symbol.Map.empty in 
+  let best_self_coefficient = ref Srk.Syntax.Symbol.Map.empty in 
   (* 
       CHANGES NEEDED:
         * improve/replace our use of wedge projections
@@ -391,6 +391,8 @@ let mk_height_based_summary
           (* Eventually I need to process possible terms over this B_in *)
           (* Now I will process lower-strata dimensions *)
           let lower_strata_polynomial = 
+            (* Be careful: this code currently assumes that there won't be
+                 interdependent variables... *)
             List.fold_left
             (fun poly (coeff,dim) -> 
               if BatMap.Int.mem dim sub_dim_to_rec_num 
@@ -405,21 +407,11 @@ let mk_height_based_summary
           let blk_add = [| lower_strata_polynomial |] in 
           recurrence_candidates := {outer_sym=target_outer_sym;
                                     inner_sym=target_inner_sym;
-                                    coeff=outer_coeff;
+                                    coeff=inner_coeff;
                                     transform_block=blk_transform;
                                     add_block=blk_add;
                                     dependencies=[]} :: 
-                                    (!recurrence_candidates);
-          let old_coeff = Srk.Syntax.Symbol.Map.find_default 
-            (QQ.add outer_coeff QQ.one) 
-            target_inner_sym 
-            !best_outer_coefficient in 
-          if (QQ.compare outer_coeff old_coeff) <= 0 then 
-            best_outer_coefficient := 
-              Srk.Syntax.Symbol.Map.add 
-              target_outer_sym 
-              outer_coeff 
-              !best_outer_coefficient
+                                    (!recurrence_candidates)
           end 
         in
       let process_constraint = function 
@@ -430,18 +422,43 @@ let mk_height_based_summary
       in
     List.iter extract_recurrence_for_symbol bounds.bound_pairs;
     (* *)
+    (* Scan for the lowest self-coefficent that each B_out has*)
+    let find_best_self_coefficient candidate = 
+      let old_coeff = Srk.Syntax.Symbol.Map.find_default 
+        (QQ.add candidate.coeff QQ.one) 
+        candidate.outer_sym 
+        !best_self_coefficient in 
+      if (QQ.compare candidate.coeff old_coeff) <= 0 then 
+        best_self_coefficient := 
+          Srk.Syntax.Symbol.Map.add 
+          candidate.outer_sym 
+          candidate.coeff 
+          !best_self_coefficient
+      in 
+    List.iter find_best_self_coefficient !recurrence_candidates;
+    (* *)
+    (* TODO: 
+         - Yeah, I think I need to break this into more stages
+             - The first stage should just dump out a term, or something...
+             - I guess I need to get a list of dependencies
+         - Problem: can't formulate transform and add blocks until interdep
+             vars have entries in rec_num...
+         - Need to add the loop that filters by dependencies... 
+         - Need to think about how we compute the right matrix for
+             a collection of interdependent variables...
+             - I guess, scan through the variables referred to in a set
+               and do something with it...
+    *)
+    (* *)
     (* Don't extract more than one recurrence for each symbol *)
-    let process_candidate_recurrence 
-      recurrences
-      (* (target_outer_sym,target_inner_sym,outer_coeff,blk_transform,blk_add) *)
-      candidate
+    let process_candidate_recurrence recurrences candidate
       = 
       if not (Srk.Syntax.Symbol.Map.mem candidate.inner_sym recurrences.done_symbols) &&
         (QQ.equal candidate.coeff
-        (Srk.Syntax.Symbol.Map.find candidate.outer_sym !best_outer_coefficient))
+        (Srk.Syntax.Symbol.Map.find candidate.outer_sym !best_self_coefficient))
       then (* Do extract *)
+        (* Note: the following puts the candidate's symbol into done_symbols *)
         add_recurrence_to_collection candidate recurrences 
-          (* target_inner_sym target_outer_sym blk_transform blk_add recurrences *)
       else (* Don't extract *)
         recurrences in 
     let recurrences = 
