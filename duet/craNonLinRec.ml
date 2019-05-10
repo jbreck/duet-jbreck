@@ -313,9 +313,9 @@ let mk_height_based_summary
                 then UseTerm (coeff,dim)
                 else DropInequation)
             else if sym == target_inner_sym then (* ---------- TARGET B_IN *)
-              (if is_at_least_one coeff
+              (if is_non_negative coeff
                 then UseTerm (coeff,dim)
-                else UseTerm (QQ.zero,dim))    (* Need not restrict to >=1 *)
+                else DropTerm)                 (* Need not restrict to >=1 *)
             else if have_recurrence sym recurrences then  (* LOWER STRATUM *)
               (if is_non_negative coeff
                 then UseTerm (coeff,dim) (* Keep non-negative coefficients *)
