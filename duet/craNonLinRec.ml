@@ -172,7 +172,7 @@ let add_recurrence_to_collection
  (*target_inner_sym target_outer_sym blk_transform blk_add*)
  candidate
  recurrences =
-  let new_num = (Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols) + 1 in 
+  let new_num = (Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols) in 
    {done_symbols = Srk.Syntax.Symbol.Map.add candidate.inner_sym new_num recurrences.done_symbols;
     ineq_tr = (candidate.inner_sym, candidate.outer_sym)::recurrences.ineq_tr;
     blk_transforms = candidate.transform_block::recurrences.blk_transforms;
@@ -365,7 +365,7 @@ let mk_height_based_summary
             Srk.Syntax.Symbol.Map.fold
             (fun sym recurrence_number old_map -> 
               let sub_dim = (CoordinateSystem.cs_term_id sub_cs (`App (sym, []))) in 
-              BatMap.Int.add sub_dim recurrence_number old_map)
+              BatMap.Int.add sub_dim (recurrence_number) old_map)
             recurrences.done_symbols
             BatMap.Int.empty in 
           let term = CoordinateSystem.term_of_vec sub_cs vec in 
@@ -384,6 +384,7 @@ let mk_height_based_summary
           let one_over_outer_coeff = QQ.inverse outer_coeff in 
           let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
           let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
+          Format.printf "      inner_coeff: %a @." QQ.pp inner_coeff;  
           let blk_transform = [| [| inner_coeff |] |] in 
           (* Now process a constant offset *)
           let const_coeff = Linear.QQVector.coeff CoordinateSystem.const_id new_vec in 
@@ -395,6 +396,7 @@ let mk_height_based_summary
                  interdependent variables... *)
             List.fold_left
             (fun poly (coeff,dim) -> 
+              (* Should make a safer version of this that does a sanity check *)
               if BatMap.Int.mem dim sub_dim_to_rec_num 
               then
                 let rec_num = BatMap.Int.find dim sub_dim_to_rec_num in 
