@@ -945,10 +945,17 @@ let extract_vector_leq srk wedge tr_symbols term_of_id base =
 
 let extract_vector_leq_multibase srk wedge tr_symbols term_of_id =
   let bases = guess_divisors_from_wedge wedge srk in 
+  let nonunit = 
   IntPairSet.fold (fun (n,d) blocks ->
+    if d == 1 then [] else 
     List.append blocks
       (extract_vector_leq srk wedge tr_symbols term_of_id 
-        (QQ.of_frac n d))) bases [];;
+        (QQ.of_frac n d))) bases []
+  in 
+  List.append
+    (extract_vector_leq srk wedge tr_symbols term_of_id QQ.one)
+    nonunit
+  ;;
 
 (* Extract a system of recurrencs of the form Ax' <= BAx + b, where B
    has only positive entries and b is a vector of polynomials in

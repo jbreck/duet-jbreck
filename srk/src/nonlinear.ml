@@ -416,6 +416,11 @@ let rec mk_pow srk (base : 'a term) (x : 'a term) =
       (mk_eq srk (mk_mod srk x (mk_real srk (QQ.of_int 2))) (mk_real srk QQ.zero))
       pow
       (mk_neg srk pow)
+  | `Real b when QQ.lt QQ.zero b && QQ.lt b QQ.one ->
+    (* b^x when 0<b<1 yields 1/[(1/b)^x] *)
+    mk_div srk 
+      (mk_real srk QQ.one) 
+      (mk_pow srk (mk_div srk (mk_real srk QQ.one) base) x)
   | _ ->
     match Term.destruct srk x with
     | `Real power ->
