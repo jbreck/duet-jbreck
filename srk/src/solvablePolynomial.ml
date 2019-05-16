@@ -686,6 +686,46 @@ let pp srk tr_symbols formatter iter =
 
 exception Not_a_polynomial
 
+module IntPair = struct
+  type t = int * int [@@deriving ord]
+  let equal (x,y) (x',y') = (x=x' && y=y')
+  let hash = Hashtbl.hash
+end
+module IntPairSet = BatSet.Make(IntPair)
+
+(* Given a wedge, guess some values d such that some variable x may obey a
+   recurrence of the form x = x * (1/d) + ... 
+   We do this by looking for all rational numbers literals (n/d) that 
+   appear under a floor term in the wedge. *) 
+let guess_divisors_from_wedge wedge srk = 
+  let cs = Wedge.coordinate_system wedge in
+  let bases = ref (IntPairSet.singleton (1,1)) in
+  for i = 0 to CS.dim cs - 1 do
+    let coord_term = CS.term_of_coordinate cs i in
+    match Term.destruct srk coord_term with
+    | `Unop (`Floor, floor_term) ->
+      let alg = function
+      | `Real qq -> 
+      (match ZZ.to_int (QQ.numerator qq) with
+      | Some num ->
+       (match ZZ.to_int (QQ.denominator qq) with
+       | Some denom ->
+        IntPairSet.singleton (1, denom) (* alternative: (num,denom) *)
+       | _ -> IntPairSet.empty)
+      | _ -> IntPairSet.empty)
+      | `Mul xs
+      | `Add xs -> List.fold_left (fun s1 s2 -> IntPairSet.union s1 s2) IntPairSet.empty xs
+      | _ -> IntPairSet.empty
+      in 
+      let new_bases = Term.eval srk alg floor_term in
+      (*Format.printf "@.  bases:";
+      IntPairSet.iter (fun (n,d) -> Format.printf "(%d/%d) " n d) new_bases;
+      Format.printf "@.";*)
+      bases := IntPairSet.union (!bases) new_bases
+    | _ -> ()
+  done;
+  !bases;;
+
 (* A block corresponds to a set of polynomial equations.  block_zeros
    produces a list of these equations, represented in the coordinate
    system term_of_id.  Adds terms to term_of_id as necessary -- one
@@ -902,6 +942,13 @@ let extract_vector_leq srk wedge tr_symbols term_of_id base =
   in
   List.iter add_recurrence (Wedge.polyhedron diff_wedge);
   List.rev (!recurrences)
+
+let extract_vector_leq_multibase srk wedge tr_symbols term_of_id =
+  let bases = guess_divisors_from_wedge wedge srk in 
+  IntPairSet.fold (fun (n,d) blocks ->
+    List.append blocks
+      (extract_vector_leq srk wedge tr_symbols term_of_id 
+        (QQ.of_frac n d))) bases [];;
 
 (* Extract a system of recurrencs of the form Ax' <= BAx + b, where B
    has only positive entries and b is a vector of polynomials in
@@ -1426,7 +1473,7 @@ module SolvablePolynomialOne = struct
     let term_of_id = extract_constant_symbols srk tr_symbols wedge in
     let nb_constants = DArray.length term_of_id in
     let block_eq = extract_induction_vars srk wedge tr_symbols term_of_id in
-    let block_leq = extract_vector_leq srk wedge tr_symbols term_of_id QQ.one in
+    let block_leq = extract_vector_leq_multibase srk wedge tr_symbols term_of_id in
     { nb_constants;
       term_of_id = DArray.to_array term_of_id;
       block_eq = block_eq;
@@ -1458,7 +1505,7 @@ module SolvablePolynomial = struct
     let term_of_id = extract_constant_symbols srk tr_symbols wedge in
     let nb_constants = DArray.length term_of_id in
     let block_eq = extract_solvable_polynomial_eq srk wedge tr_symbols term_of_id in
-    let block_leq = extract_vector_leq srk wedge tr_symbols term_of_id QQ.one in
+    let block_leq = extract_vector_leq_multibase srk wedge tr_symbols term_of_id in
     { nb_constants;
       term_of_id = DArray.to_array term_of_id;
       block_eq = block_eq;
@@ -1490,7 +1537,7 @@ module SolvablePolynomialPeriodicRational = struct
     let term_of_id = extract_constant_symbols srk tr_symbols wedge in
     let nb_constants = DArray.length term_of_id in
     let block_eq = extract_periodic_rational_matrix_eq srk wedge tr_symbols term_of_id in
-    let block_leq = extract_vector_leq srk wedge tr_symbols term_of_id QQ.one in
+    let block_leq = extract_vector_leq_multibase srk wedge tr_symbols term_of_id in
     { nb_constants;
       term_of_id = DArray.to_array term_of_id;
       block_eq = block_eq;
