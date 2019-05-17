@@ -421,6 +421,8 @@ let rec mk_pow srk (base : 'a term) (x : 'a term) =
     mk_div srk 
       (mk_real srk QQ.one) 
       (mk_pow srk (mk_div srk (mk_real srk QQ.one) base) x)
+    (* OR: b^x when 0<b<1 yields (1/b)^(-x) *)
+    (*(mk_pow srk (mk_div srk (mk_real srk QQ.one) base) (mk_neg srk x))*)
   | _ ->
     match Term.destruct srk x with
     | `Real power ->

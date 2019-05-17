@@ -834,7 +834,8 @@ let extract_vector_leq srk wedge tr_symbols term_of_id base =
      where each constraint corresponds to a recurrence inequation. *)
   let delta =
     List.map (fun (s,_) ->
-        let name = "delta_" ^ (show_symbol srk s) in
+        (*let name = "delta_" ^ (show_symbol srk s) in*)
+        let name = "delta[" ^ (show_symbol srk s) ^ "," ^ (QQ.show base) ^ "]" in
         mk_symbol srk ~name (typ_symbol srk s))
       tr_symbols
   in
@@ -953,8 +954,8 @@ let extract_vector_leq_multibase srk wedge tr_symbols term_of_id =
         (QQ.of_frac n d))) bases []
   in 
   List.append
-    (extract_vector_leq srk wedge tr_symbols term_of_id QQ.one)
     nonunit
+    (extract_vector_leq srk wedge tr_symbols term_of_id QQ.one)
   ;;
 
 (* Extract a system of recurrencs of the form Ax' <= BAx + b, where B
