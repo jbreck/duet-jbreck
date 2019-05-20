@@ -683,13 +683,13 @@ let analyze_nonlinrec file =
       Format.printf "===== Resource-Usage Bounds =====\n";
       RG.blocks rg |> BatEnum.iter (fun procedure ->
           Format.printf "\n";
-          (*Format.printf "---- Summarizing a procedure ----\n";*)
+          Format.printf "---- Summarizing a procedure ----\n";
           let entry = (RG.block_entry rg procedure).did in
           let exit = (RG.block_exit rg procedure).did in
           let summary = BURG.path_weight query entry exit in
-          (*  Format.printf "@.       PH_summary = ";
-              print_indented 17 summary;
-              Format.printf "\n";  *)
+          Format.printf "@. procedure summary for bounds generation = @.";
+              print_indented 0 summary;
+              Format.printf "\n";
           if K.mem_transform cost summary then begin
             logf ~level:`always "Procedure: %a" Varinfo.pp procedure;
             (* replace cost with 0, add constraint cost = rhs *)
@@ -741,6 +741,21 @@ let _ =
      analyze_nonlinrec,
      " Compositional recurrence analysis for non-linear recursion")
 
+
+(* 
+
+  Format.printf "@.  SPPR::abstract_wedge called on: @.  %t @.@." (fun f -> Wedge.pp f wedge);
+
+  Format.printf "@.  SPPR::abstract called on: @.  %a @.@." 
+      (Syntax.Formula.pp srk) phi;
+
+  let exp srk tr_symbols loop_counter iter =
+    let result = exp srk tr_symbols loop_counter iter in 
+    Format.printf "@.  SPPR::exp result: @.  %a @.@." 
+      (Syntax.Formula.pp srk) result;
+    result
+
+*)
 
 (* *)
 
