@@ -168,23 +168,40 @@ type recurrence_candidate = {
   dependencies: Srk.Syntax.symbol list (* what other same-stratum symbols does this depend on? *)
 }
 
-let add_recurrence_to_collection
- (*target_inner_sym target_outer_sym blk_transform blk_add*)
- candidate
- recurrences =
+let add_recurrence_to_collection candidate recurrences =
   let new_num = (Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols) in 
-   {done_symbols = Srk.Syntax.Symbol.Map.add candidate.inner_sym new_num recurrences.done_symbols;
-    ineq_tr = (candidate.inner_sym, candidate.outer_sym)::recurrences.ineq_tr;
-    blk_transforms = candidate.transform_block::recurrences.blk_transforms;
-    blk_adds = candidate.add_block::recurrences.blk_adds;
-    rev_term_of_id = (Srk.Syntax.mk_const Cra.srk candidate.inner_sym)::recurrences.rev_term_of_id}
+  {done_symbols = Srk.Syntax.Symbol.Map.add candidate.inner_sym new_num recurrences.done_symbols;
+   ineq_tr = (candidate.inner_sym, candidate.outer_sym)::recurrences.ineq_tr;
+   blk_transforms = candidate.transform_block::recurrences.blk_transforms;
+   blk_adds = candidate.add_block::recurrences.blk_adds;
+   rev_term_of_id = (Srk.Syntax.mk_const Cra.srk candidate.inner_sym)::recurrences.rev_term_of_id}
+
+let accept_candidate candidate recurrences = 
+  let new_num = (Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols) in 
+  {done_symbols = Srk.Syntax.Symbol.Map.add candidate.inner_sym new_num recurrences.done_symbols;
+   ineq_tr = (candidate.inner_sym, candidate.outer_sym)::recurrences.ineq_tr;
+   blk_transforms = recurrences.blk_transforms;
+   blk_adds = recurrences.blk_adds;
+   rev_term_of_id = (Srk.Syntax.mk_const Cra.srk candidate.inner_sym)::recurrences.rev_term_of_id}
+
+let specify_recurrence inner_sym transform_block add_block recurrences = 
+  (* First we assert that specify_recurrence is being called in the same order 
+      as accept_candidate was called *)
+  let n = List.length recurrences.blk_transforms in 
+  let (accepted_inner, accepted_outer) = List.nth recurrences.ineq_tr n in 
+  assert (inner_sym = accepted_inner);
+  {done_symbols = recurrences.done_symbols;
+   ineq_tr = recurrences.ineq_tr;
+   blk_transforms = transform_block::recurrences.blk_transforms;
+   blk_adds = add_block::recurrences.blk_adds;
+   rev_term_of_id = recurrences.rev_term_of_id}
 
 let empty_recurrence_collection = 
   {done_symbols = Srk.Syntax.Symbol.Map.empty;
-    ineq_tr = [];
-    blk_transforms = [];
-    blk_adds = [];
-    rev_term_of_id = []}
+   ineq_tr = [];
+   blk_transforms = [];
+   blk_adds = [];
+   rev_term_of_id = []}
 
 let count_recurrences recurrences = 
   Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols
@@ -192,6 +209,42 @@ let count_recurrences recurrences =
 type term_examination_result = 
   | DropTerm | DropInequation | UseTerm of Srk.QQ.t * int 
   | UseTermWithDependency of Srk.QQ.t * int * Srk.Syntax.symbol
+
+let build_sub_dim_to_rec_num_map recurrences sub_cs = 
+  Srk.Syntax.Symbol.Map.fold
+  (fun sym recurrence_number old_map -> 
+    let sub_dim = (CoordinateSystem.cs_term_id sub_cs (`App (sym, []))) in 
+    BatMap.Int.add sub_dim (recurrence_number) old_map)
+  recurrences.done_symbols
+  BatMap.Int.empty 
+
+let build_recurrence sub_cs recurrences target_inner_sym new_coeffs_and_dims sub_dim_to_rec_num = 
+  let new_vec = Linear.QQVector.of_list new_coeffs_and_dims in
+  let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
+  let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
+  let blk_transform = [| [| inner_coeff |] |] in 
+  (* Now process a constant offset *)
+  let const_coeff = Linear.QQVector.coeff CoordinateSystem.const_id new_vec in 
+  let const_add_poly = Polynomial.QQXs.scalar const_coeff in 
+  (* Eventually I need to process possible terms over this B_in *)
+  (* Now I will process lower-strata dimensions *)
+  let lower_strata_polynomial = 
+    (* Be careful: this code currently assumes that there won't be
+          interdependent variables... *)
+    List.fold_left
+    (fun poly (coeff,dim) -> 
+      (* Should make a safer version of this that does a sanity check *)
+      if BatMap.Int.mem dim sub_dim_to_rec_num 
+      then
+        let rec_num = BatMap.Int.find dim sub_dim_to_rec_num in 
+        let monomial = (Polynomial.Monomial.singleton rec_num 1) in 
+        (* Currently, this hard-codes linear (power 1) usage of lower-strata B_ins *)
+        Polynomial.QQXs.add_term coeff monomial poly
+      else poly)
+    const_add_poly
+    new_coeffs_and_dims in 
+  let blk_add = [| lower_strata_polynomial |] in 
+  (blk_transform, blk_add)
 
 let mk_height_based_summary 
   bounds recursive_weight top_down_summary ht_var_sym program_vars base top =  
@@ -361,13 +414,8 @@ let mk_height_based_summary
         | Some new_coeffs_and_dims -> 
           let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
           let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
-          let sub_dim_to_rec_num = 
-            Srk.Syntax.Symbol.Map.fold
-            (fun sym recurrence_number old_map -> 
-              let sub_dim = (CoordinateSystem.cs_term_id sub_cs (`App (sym, []))) in 
-              BatMap.Int.add sub_dim (recurrence_number) old_map)
-            recurrences.done_symbols
-            BatMap.Int.empty in 
+
+          let sub_dim_to_rec_num = build_sub_dim_to_rec_num_map recurrences sub_cs in
           let term = CoordinateSystem.term_of_vec sub_cs vec in 
           (* *)
           let new_vec = Linear.QQVector.of_list new_coeffs_and_dims in
@@ -377,7 +425,7 @@ let mk_height_based_summary
           begin 
           (* We've identified a recurrence; now we'll put together the data 
             structures we'll need to solve it.  *)
-          Format.printf "  identified recurrence inequation: %a@." 
+          Format.printf "  Recurrence: %a@." 
               (Srk.Syntax.Term.pp Cra.srk) term;  
           Format.printf "    before filter: %a @." Linear.QQVector.pp vec;
           Format.printf "     after filter: %a @." Linear.QQVector.pp new_vec;
@@ -385,28 +433,10 @@ let mk_height_based_summary
           let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
           let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
           Format.printf "      inner_coeff: %a @." QQ.pp inner_coeff;  
-          let blk_transform = [| [| inner_coeff |] |] in 
-          (* Now process a constant offset *)
-          let const_coeff = Linear.QQVector.coeff CoordinateSystem.const_id new_vec in 
-          let const_add_poly = Polynomial.QQXs.scalar const_coeff in 
-          (* Eventually I need to process possible terms over this B_in *)
-          (* Now I will process lower-strata dimensions *)
-          let lower_strata_polynomial = 
-            (* Be careful: this code currently assumes that there won't be
-                 interdependent variables... *)
-            List.fold_left
-            (fun poly (coeff,dim) -> 
-              (* Should make a safer version of this that does a sanity check *)
-              if BatMap.Int.mem dim sub_dim_to_rec_num 
-              then
-                let rec_num = BatMap.Int.find dim sub_dim_to_rec_num in 
-                let monomial = (Polynomial.Monomial.singleton rec_num 1) in 
-                (* Currently, this hard-codes linear (power 1) usage of lower-strata B_ins *)
-                Polynomial.QQXs.add_term coeff monomial poly
-              else poly)
-            const_add_poly
-            new_coeffs_and_dims in 
-          let blk_add = [| lower_strata_polynomial |] in 
+
+          let (blk_transform, blk_add) = build_recurrence sub_cs recurrences 
+            target_inner_sym new_coeffs_and_dims sub_dim_to_rec_num in 
+
           recurrence_candidates := {outer_sym=target_outer_sym;
                                     inner_sym=target_inner_sym;
                                     coeff=inner_coeff;
@@ -452,9 +482,9 @@ let mk_height_based_summary
                and do something with it...
     *)
     (* *)
-    (* Don't extract more than one recurrence for each symbol *)
-    let process_candidate_recurrence recurrences candidate
-      = 
+    (* PHASE: filter out non-preferred recurrences *)
+    (*   Don't extract more than one recurrence for each symbol *)
+    let process_candidate_recurrence recurrences candidate = 
       if not (Srk.Syntax.Symbol.Map.mem candidate.inner_sym recurrences.done_symbols) &&
         (QQ.equal candidate.coeff
         (Srk.Syntax.Symbol.Map.find candidate.outer_sym !best_self_coefficient))
@@ -467,6 +497,13 @@ let mk_height_based_summary
       List.fold_left process_candidate_recurrence
         recurrences
         !recurrence_candidates in 
+    (* *)
+    (* PHASE: filter out recurrences having unmet dependencies *)
+
+    (* PHASE: accept remaining recurrence candidates *)
+
+    (* PHASE: build recurrence matrices *)
+
     Format.printf "  [ -- end of stratum -- ]@.";
     (* Did we get new recurrences? If so, then look for a higher stratum. *)
     if count_recurrences recurrences > nb_previous_recurrences then 
