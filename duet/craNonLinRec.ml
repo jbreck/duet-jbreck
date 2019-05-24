@@ -180,6 +180,7 @@ let add_recurrence_to_collection candidate recurrences =
 
 let accept_candidate candidate recurrences = 
   let new_num = (Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols) in 
+  (* Format.printf "  Accepted candidate: %d@." new_num; *)
   {done_symbols = Srk.Syntax.Symbol.Map.add candidate.inner_sym new_num recurrences.done_symbols;
    ineq_tr = (candidate.inner_sym, candidate.outer_sym)::recurrences.ineq_tr;
    blk_transforms = recurrences.blk_transforms;
@@ -190,7 +191,8 @@ let specify_recurrence inner_sym transform_block add_block recurrences =
   (* First we assert that specify_recurrence is being called in the same order 
       as accept_candidate was called *)
   let n = List.length recurrences.blk_transforms in 
-  let (accepted_inner, accepted_outer) = List.nth recurrences.ineq_tr n in 
+  let (accepted_inner, accepted_outer) = 
+    List.nth recurrences.ineq_tr ((List.length recurrences.ineq_tr) - n - 1) in 
   assert (inner_sym = accepted_inner);
   {done_symbols = recurrences.done_symbols;
    ineq_tr = recurrences.ineq_tr;
@@ -458,6 +460,7 @@ let mk_height_based_summary
       in
     List.iter extract_recurrence_for_symbol bounds.bound_pairs;
     (* *)
+    (* 
     (* Scan for the lowest self-coefficent that each B_out has*)
     let find_best_self_coefficient candidate = 
       let old_coeff = Srk.Syntax.Symbol.Map.find_default 
@@ -472,6 +475,7 @@ let mk_height_based_summary
           !best_self_coefficient
       in 
     List.iter find_best_self_coefficient !recurrence_candidates;
+    *)
     (* *)
     (* TODO: 
          - Yeah, I think I need to break this into more stages
@@ -491,16 +495,33 @@ let mk_height_based_summary
     (*   Don't extract more than one recurrence for each symbol *)
     let rec filter_candidates () = 
       begin
+        (*Format.printf "  Entered FC.@.";*)
         let nb_recurs = List.length !recurrence_candidates in 
         let symbols_of_candidates = 
           let add_symbol_candidate syms recur = 
             Srk.Syntax.Symbol.Set.add recur.inner_sym syms in
           List.fold_left add_symbol_candidate
             Srk.Syntax.Symbol.Set.empty
-            !recurrence_candidates in
+            !recurrence_candidates in 
+        let earlier_candidates = ref Srk.Syntax.Symbol.Set.empty in 
+        let drop_redundant_recs recur = 
+          (* Rule: at most one recurrence per bounding symbol *) 
+          (not (Srk.Syntax.Symbol.Map.mem recur.inner_sym recurrences.done_symbols)) 
+          && 
+          List.fold_left (fun ok dep -> let result = ok && 
+              (not (Srk.Syntax.Symbol.Set.mem recur.inner_sym !earlier_candidates)) 
+              in 
+              earlier_candidates := 
+                Srk.Syntax.Symbol.Set.add recur.inner_sym !earlier_candidates; 
+              (* Format.printf "  Checking for redundancy: %b@." result; *)
+              result) 
+            true 
+            recur.dependencies in 
+        recurrence_candidates := 
+            List.filter drop_redundant_recs !recurrence_candidates;
         let drop_rec_with_unmet_deps recur = 
-          List.fold_left 
-            (fun ok dep -> ok &&
+          List.fold_left (fun ok dep -> ok &&
+              (* Rule: no unmet dependencies *)
               ((Srk.Syntax.Symbol.Set.mem dep symbols_of_candidates)
                ||
                (Srk.Syntax.Symbol.Map.mem dep recurrences.done_symbols)))
@@ -510,8 +531,11 @@ let mk_height_based_summary
             List.filter drop_rec_with_unmet_deps !recurrence_candidates;
         if (List.length !recurrence_candidates) < nb_recurs
         then filter_candidates ()
-      end in
-    filter_candidates;
+      end in 
+    (*Format.printf "  N candidates before filter: %d@." (List.length !recurrence_candidates);*)
+    filter_candidates ();
+    (*Format.printf "  N candidates after filter:  %d@." (List.length !recurrence_candidates);*)
+    (*
     let process_candidate_recurrence recurrences candidate = 
       if not (Srk.Syntax.Symbol.Map.mem candidate.inner_sym recurrences.done_symbols) &&
         (QQ.equal candidate.coeff
@@ -525,12 +549,28 @@ let mk_height_based_summary
       List.fold_left process_candidate_recurrence
         recurrences
         !recurrence_candidates in 
+    *)
     (* *)
-
-    (* PHASE: accept remaining recurrence candidates *)
-
-    (* PHASE: build recurrence matrices *)
-
+    
+    (* PHASE: accept remaining recurrence candidates *) 
+    let foreach_candidate_accept recurrences candidate = 
+      accept_candidate candidate recurrences in 
+    let recurrences = 
+      List.fold_left 
+        foreach_candidate_accept recurrences !recurrence_candidates in 
+    (* PHASE: build recurrence matrices *) 
+    let foreach_candidate_build recurrences candidate = 
+      let sub_dim_to_rec_num = 
+        build_sub_dim_to_rec_num_map recurrences candidate.sub_cs in 
+      let (blk_transform, blk_add) = 
+        build_recurrence candidate.sub_cs recurrences 
+        candidate.inner_sym candidate.inequation sub_dim_to_rec_num in 
+      specify_recurrence 
+        candidate.inner_sym blk_transform blk_add recurrences in 
+    let recurrences = 
+      List.fold_left 
+        foreach_candidate_build recurrences !recurrence_candidates in 
+    
     Format.printf "  [ -- end of stratum -- ]@.";
     (* Did we get new recurrences? If so, then look for a higher stratum. *)
     if count_recurrences recurrences > nb_previous_recurrences then 
