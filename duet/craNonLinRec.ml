@@ -165,6 +165,8 @@ type recurrence_candidate = {
   coeff: Srk.QQ.t;
   transform_block: Srk.QQ.t array array;
   add_block: Srk.Polynomial.QQXs.t array;
+  sub_cs: Cra.Ctx.t Srk.CoordinateSystem.t;
+  inequation: (Srk.QQ.t * int) list;
   dependencies: Srk.Syntax.symbol list (* what other same-stratum symbols does this depend on? *)
 }
 
@@ -442,6 +444,8 @@ let mk_height_based_summary
                                     coeff=inner_coeff;
                                     transform_block=blk_transform;
                                     add_block=blk_add;
+                                    sub_cs=sub_cs;
+                                    inequation=new_coeffs_and_dims;
                                     dependencies=[]} :: 
                                     (!recurrence_candidates)
           end 
@@ -482,8 +486,32 @@ let mk_height_based_summary
                and do something with it...
     *)
     (* *)
-    (* PHASE: filter out non-preferred recurrences *)
+    (* PHASE: filter out recurrences having unmet dependencies  *)
+    (*        AND in the future maybe prioritize recurrences    *)
     (*   Don't extract more than one recurrence for each symbol *)
+    let rec filter_candidates () = 
+      begin
+        let nb_recurs = List.length !recurrence_candidates in 
+        let symbols_of_candidates = 
+          let add_symbol_candidate syms recur = 
+            Srk.Syntax.Symbol.Set.add recur.inner_sym syms in
+          List.fold_left add_symbol_candidate
+            Srk.Syntax.Symbol.Set.empty
+            !recurrence_candidates in
+        let drop_rec_with_unmet_deps recur = 
+          List.fold_left 
+            (fun ok dep -> ok &&
+              ((Srk.Syntax.Symbol.Set.mem dep symbols_of_candidates)
+               ||
+               (Srk.Syntax.Symbol.Map.mem dep recurrences.done_symbols)))
+            true
+            recur.dependencies in 
+        recurrence_candidates := 
+            List.filter drop_rec_with_unmet_deps !recurrence_candidates;
+        if (List.length !recurrence_candidates) < nb_recurs
+        then filter_candidates ()
+      end in
+    filter_candidates;
     let process_candidate_recurrence recurrences candidate = 
       if not (Srk.Syntax.Symbol.Map.mem candidate.inner_sym recurrences.done_symbols) &&
         (QQ.equal candidate.coeff
@@ -498,7 +526,6 @@ let mk_height_based_summary
         recurrences
         !recurrence_candidates in 
     (* *)
-    (* PHASE: filter out recurrences having unmet dependencies *)
 
     (* PHASE: accept remaining recurrence candidates *)
 
