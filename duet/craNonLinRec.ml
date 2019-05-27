@@ -270,6 +270,7 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
             Polynomial.QQXs.add_term coeff monomial poly
           else (* same stratum *) 
             (* In-place modification of blk_transform parameter *)
+            (* REV: I write blk_last-x here so that I flip the recurrences backwards to match term_of_id *)
             (blk_transform.(blk_last-(inner_rec_num-block_start)).(blk_last-(rec_num-block_start)) <- coeff;
             poly)
         end
@@ -607,7 +608,7 @@ let mk_height_based_summary
       let add_entries = 
         List.fold_left 
           foreach_candidate_build [] candidate_block in 
-      let blk_add = Array.of_list (List.rev add_entries) in 
+      let blk_add = Array.of_list (List.rev add_entries) in (* REV entries to match term_of_id *) 
       Format.printf "  Registering add block of size: %d@." (Array.length blk_add);
       register_recurrence blk_transform blk_add recurrences in 
     let recurrences = 
