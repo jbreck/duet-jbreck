@@ -18,7 +18,7 @@ testroot = parent(2,os.path.realpath(__file__))
 chora = dict() 
 chora["ID"] = "chora"
 chora["displayname"] = "CHORA"
-chora["cmd"] = [parent(2,testroot) + "/duet.native","-cra-nonlinrec","{filename}"]
+chora["cmd"] = [parent(2,testroot) + "/duet.native","-chora","{filename}"]
 
 def defaulting_field(d,*fields) :
     if len(fields) == 0 :
