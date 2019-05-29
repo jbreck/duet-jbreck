@@ -794,7 +794,7 @@ let analyze_nonlinrec file =
       Format.printf "===== Resource-Usage Bounds =====\n";
       RG.blocks rg |> BatEnum.iter (fun procedure ->
           Format.printf "\n";
-          Format.printf "---- Summarizing a procedure ----\n";
+          Format.printf "---- Summary of %a ----\n" Varinfo.pp procedure;
           let entry = (RG.block_entry rg procedure).did in
           let exit = (RG.block_exit rg procedure).did in
           let summary = BURG.path_weight query entry exit in
@@ -839,7 +839,8 @@ let analyze_nonlinrec file =
               logf ~level:`always "%a is infeasible"
                 Varinfo.pp procedure
           end else
-            logf ~level:`always "Procedure %a has zero cost" Varinfo.pp procedure)
+          logf ~level:`always "Procedure %a has zero cost" Varinfo.pp procedure;
+          Format.printf "---------------------------------\n")
       )
     (* let query = TS.mk_query ts in *)
     end
