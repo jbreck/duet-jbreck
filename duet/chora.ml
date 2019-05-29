@@ -715,7 +715,7 @@ let analyze_chora file =
     let (ts, assertions) = Cra.make_transition_system rg in
     let program_vars = 
       let open CfgIr in let file = get_gfile() in
-      List.iter (fun vi -> (Format.printf "       var %t @." (fun f -> Varinfo.pp f vi))) file.vars; 
+      (*List.iter (fun vi -> (Format.printf "       var %t @." (fun f -> Varinfo.pp f vi))) file.vars; *)
       (* let vars = List.filter (fun vi -> not (CfgIr.defined_function vi file)) file.vars in *)
       (*let vars = List.filter (fun vi -> 
         match Core.Varinfo.get_type vi with 
@@ -735,7 +735,7 @@ let analyze_chora file =
           never_addressed_functions
         )) file.vars in 
   
-      List.iter (fun vi -> (Format.printf "  true var %t @." (fun f -> Varinfo.pp f vi))) vars; 
+      (*List.iter (fun vi -> (Format.printf "  true var %t @." (fun f -> Varinfo.pp f vi))) vars;*)
       List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in 
     let top = K.havoc program_vars in 
     let summarizer (scc : BURG.scc) path_weight_internal = 
