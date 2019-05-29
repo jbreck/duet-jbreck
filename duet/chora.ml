@@ -11,7 +11,7 @@ module Ctx = NewtonDomain.Ctx
 
 module Var = Cra.V
 
-include Log.Make(struct let name = "cra_nonlinrec" end)
+include Log.Make(struct let name = "chora" end)
 module A = Interproc.MakePathExpr(Cra.K)
 
 open Pathexpr
@@ -707,7 +707,7 @@ let make_top_down_summary p_entry path_weight_internal top call_edges =
   Format.printf "  ]\n";
   phi_td, height_var_sym;;
 
-let analyze_nonlinrec file =
+let analyze_chora file =
   Cra.populate_offset_table file;
   match file.entry_points with
   | [main] -> begin
@@ -849,8 +849,8 @@ let analyze_nonlinrec file =
 
 let _ =
   CmdLine.register_pass
-    ("-cra-nonlinrec",
-     analyze_nonlinrec,
+    ("-chora",
+     analyze_chora,
      " Compositional recurrence analysis for non-linear recursion")
 
 

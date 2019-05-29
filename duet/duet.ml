@@ -14,7 +14,7 @@ open Cra
 open Proofspace
 open Dependence
 open ConcDep
-open CraNonLinRec
+open Chora
 
 let usage_msg = "Duet program analyzer\nUsage: duet [OPTIONS] file.[c|bp|duet]"
 
