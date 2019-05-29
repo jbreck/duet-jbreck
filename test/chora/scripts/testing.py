@@ -42,6 +42,7 @@ class Tool :
         self.cmd = d["cmd"]
         self.displayname = defaulting_field(d,"displayname","ID")
 
+# TODO: allow for timing of multiple trials
 class Datfile :
     def __init__(self, datpath) :
         datcellregex = re.compile("([^=\t]+=[^\t]+)")
@@ -77,6 +78,12 @@ batch["files"] = glob.glob(testroot + "/RBA_*.c")
 batch["timeout"] = 300
 batch["toolIDs"] = sorted(alltools.keys())
 batch["style"] = "rba"
+
+def reformat_float_string(s,form) :
+    try :
+        return form % float(s)
+    except :
+        return s
 
 class HTMLTable :
     def __init__(self) :
@@ -250,16 +257,17 @@ def format_run(outrun, style) :
 
             # fill in table
             table.set("head","benchmark","Benchmark")
-            table.set("head","logs","Full Logs")
+            table.set("head","logs","Full<br>Logs")
             for tool in tools :
-                table.set("head","tooltime/"+tool.ID, tool.displayname + " time (s)")
-                table.set("head","toolrba/"+tool.ID, tool.displayname + " output summary")
+                table.set("head","tooltime/"+tool.ID, tool.displayname + "<br>Time (s)")
+                table.set("head","toolrba/"+tool.ID, tool.displayname + "<br>Resource Bounds")
             for sourcefile in sourcefiles :
                 sourcefilekey = "src/"+sourcefile
                 table.set(sourcefilekey,"benchmark","<a href='sources/"+sourcefile+"'>"+sourcefile+"</a>")
                 loglinks = list()
                 for tool in tools :
-                    table.set(sourcefilekey,"tooltime/"+tool.ID,datfile.get_default(sourcefile,tool.ID,"time",""))
+                    timestring = reformat_float_string(datfile.get_default(sourcefile,tool.ID,"time",""),"%0.3f")
+                    table.set(sourcefilekey,"tooltime/"+tool.ID,timestring)
                     logrel = sourcefile + "." + tool.ID + ".log"
                     logpath = logroot + logrel
                     if not os.path.exists(logpath) : continue
