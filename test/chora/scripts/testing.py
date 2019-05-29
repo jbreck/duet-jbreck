@@ -148,9 +148,8 @@ def rba_callout(path) :
                 output += line
     return output
 
-def run(batch) :
+def run(batch, stamp) :
     tools = [alltools[I] for I in batch["toolIDs"]]
-    stamp = datetime.datetime.now().strftime("%Y_%m_%d_at_%H_%M_%S")
     print "RUN ID=" + stamp
     outroot = testroot + "/output"
     outrun = outroot + "/" + stamp
@@ -281,7 +280,14 @@ def format_run(outrun, style) :
 
 if __name__ == "__main__" :
     if len(sys.argv) < 2 : usage()
-    if sys.argv[1] == "--run" : run(batch)
+    if sys.argv[1] == "--run" : 
+        stamp = datetime.datetime.now().strftime("%Y_%m_%d_at_%H_%M_%S")
+        for arg in sys.argv :
+            matches = re.match("--stamp=(.*)",arg)
+            if matches :
+                stamp = matches.group(1)
+                break
+        run(batch,stamp)
     elif sys.argv[1] == "--format" :
         if len(sys.argv) < 3 : usage()
         outrun = sys.argv[2]
