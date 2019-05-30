@@ -9,10 +9,8 @@ void recursive(int n) {
     recursive(n-1);
     int temp_return1_b = return1;
     int temp_return2_b = return2;
-    //return2 = (temp_return1_a + temp_return1_b) * 1;
-    //return1 = (temp_return2_a + temp_return2_b) * 1;
-    return2 = (temp_return1_a) * 2;
-    return1 = (temp_return2_a) * 2;
+    return2 = temp_return1_a + temp_return1_b;
+    return1 = temp_return2_a + temp_return2_b;
     return;
 }
 void main(int n) {
