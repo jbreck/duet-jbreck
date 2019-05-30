@@ -14,9 +14,7 @@ void recursive(int n) {
     return;
 }
 void main(int n) {
-    return1 = 1;
-    return2 = 1;
-    __VERIFIER_assume(n >= 0);
+    //__VERIFIER_assume(n >= 0);
     recursive(n);
     __cost = return1;
 }
