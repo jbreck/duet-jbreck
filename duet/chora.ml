@@ -773,7 +773,7 @@ let analyze_chora file =
       [one_summary] in 
     (* *) 
     let query = BURG.mk_query ts summarizer in
-    
+    (* Resource-bound analysis *)
     let cost_opt =
       let open CfgIr in
       let file = get_gfile () in
@@ -841,8 +841,43 @@ let analyze_chora file =
           end else
           logf ~level:`always "Procedure %a has zero cost" Varinfo.pp procedure;
           Format.printf "---------------------------------\n")
-      )
-    (* let query = TS.mk_query ts in *)
+      );
+      (* Assertion checking *)
+      if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
+      begin
+        Format.printf "Assertion checking\n";
+        let entry_main = (RG.block_entry rg main).did in
+        assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
+            let path = BURG.path_weight query entry_main v in
+            let sigma sym =
+              match Cra.V.of_symbol sym with
+              | Some v when K.mem_transform v path ->
+                K.get_transform v path
+              | _ -> Ctx.mk_const sym
+            in
+            let phi = Syntax.substitute_const Ctx.context sigma phi in
+            let path_condition =
+              Ctx.mk_and [K.guard path; Ctx.mk_not phi]
+              |> SrkSimplify.simplify_terms Cra.srk
+            in
+            logf "Path condition:@\n%a"
+              (Syntax.pp_smtlib2 Ctx.context) path_condition;
+            (*dump_goal loc path_condition;*)
+            match Wedge.is_sat Ctx.context path_condition with
+            | `Sat -> 
+              Report.log_error loc msg;
+              Format.printf "Assertion FAILED: %s\n" msg
+            | `Unsat -> 
+              Report.log_safe ();
+              Format.printf "Assertion PASSED: %s\n" msg
+            | `Unknown ->
+              logf ~level:`warn "Z3 inconclusive";
+              Report.log_error loc msg;
+              Format.printf "Assertion FAILED/INCONCLUSIVE: %s\n" msg
+              );
+        Format.printf "=================================\n";
+      end
+
     end
   (* *)
   | _ -> assert false;;

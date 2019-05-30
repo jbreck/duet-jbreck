@@ -666,13 +666,13 @@ module MakeBottomUpRecGraph (W : Weight) = struct
         in
         let table = mk_table () in
         (* Edges added by the following action may no longer be necessary: *)
-        (*
+        
         let initial_callgraph =
           CallSet.fold (fun call callgraph ->
               CallGraph.add_edge callgraph callgraph_entry call)
             calls
             CallGraph.empty
-        in *)
+        in 
         (* If there is a call to (s,t) between s' and t', add a dependence
            edge from (s',t') to (s,t) *)
         let callgraph =
@@ -682,18 +682,20 @@ module MakeBottomUpRecGraph (W : Weight) = struct
                 (eval ~table pe_procs pathexpr)
                 callgraph)
             call_pathexpr
-            CallGraph.empty (* initial_callgraph *) (* Use CallGraph.empty here? *)
+            (*CallGraph.empty*) initial_callgraph (* Use CallGraph.empty here? *)
         in      
         List.rev (CallGraphSCCs.scc_list callgraph) (* = callgraph_sccs *)
         in 
+      Format.printf "Number of SCCs in call graph is %d." (List.length callgraph_sccs);
       let summaries = ref (M.map (fun _ -> W.zero) call_pathexpr) in
       let rec summarize_sccs scc_list =
         match scc_list with 
         | [] -> ()
         | callgraph_scc :: rest ->
+          let is_within_scc proc = List.mem proc callgraph_scc in 
+          if is_within_scc callgraph_entry then  
+            summarize_sccs rest else
           begin
-            let is_within_scc proc = List.mem proc callgraph_scc
-            in 
             (* Idea: should we not give back SCCs that have no calls in them? *)
             (* Idea: should we really give a separate recgraph back for each SCC? *)
             (* path_weight_internal takes a (src,tgt) pair and 
