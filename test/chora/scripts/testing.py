@@ -166,10 +166,10 @@ c4b["style"] = "assert"
 
 icrabatch = dict(bbatch)
 icrabatch["ID"] = "icra"
-icrabatch["root"] = "/u/j/b/jbreck/research/2013/ICRA/icra/WALi-OpenNWA/Examples/cprover/tests/sv-benchmarks/"
+icrabatch["root"] = "/u/j/b/jbreck/research/2013/ICRA/icra/WALi-OpenNWA/Examples/cprover/tests/"
 #icrabatch["files"] = (glob.glob(icrabatch["root"] + "c4b/*.c")[:4] + 
 #                      glob.glob(icrabatch["root"] + "sv-benchmarks/loops/*.c")[-4:])
-icrabatch["files"] = [os.path.join(R,F) for R,D,Fs in os.walk(icrabatch["root"]) for F in Fs]
+icrabatch["files"] = [F for F in [os.path.join(R,F) for R,D,Fs in os.walk(icrabatch["root"]) for F in Fs] if F.endswith(".c")]
 icrabatch["style"] = "assert"
 
 batch_dicts = [rbabatch, abatch, c4b, icrabatch]
