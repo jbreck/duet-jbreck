@@ -774,109 +774,111 @@ let analyze_chora file =
     (* *) 
     let query = BURG.mk_query ts summarizer in
     (* Resource-bound analysis *)
-    let cost_opt =
-      let open CfgIr in
-      let file = get_gfile () in
-      let is_cost v = (Varinfo.show v) = "__cost" in
-      try
-        Some (Cra.VVal (Core.Var.mk (List.find is_cost file.vars)))
-      with Not_found -> None
-    in
-    match cost_opt with 
-    | None -> (Format.printf "Could not find __cost variable\n")
-    | Some cost ->
-      (let cost_symbol = Cra.V.symbol_of cost in
-      let exists x =
-        match Cra.V.of_symbol x with
-        | Some v -> Core.Var.is_global (Cra.var_of_value v)
-        | None -> false
+    begin
+      let cost_opt =
+        let open CfgIr in
+        let file = get_gfile () in
+        let is_cost v = (Varinfo.show v) = "__cost" in
+        try
+          Some (Cra.VVal (Core.Var.mk (List.find is_cost file.vars)))
+        with Not_found -> None
       in
-      Format.printf "===== Resource-Usage Bounds =====\n";
-      RG.blocks rg |> BatEnum.iter (fun procedure ->
-          Format.printf "\n";
-          Format.printf "---- Summary of %a ----\n" Varinfo.pp procedure;
-          let entry = (RG.block_entry rg procedure).did in
-          let exit = (RG.block_exit rg procedure).did in
-          let summary = BURG.path_weight query entry exit in
-          Format.printf "@. procedure summary for bounds generation = @.";
-              print_indented 0 summary;
-              Format.printf "\n";
-          if K.mem_transform cost summary then begin
-            logf ~level:`always "Procedure: %a" Varinfo.pp procedure;
-            (* replace cost with 0, add constraint cost = rhs *)
-            let guard =
-              let subst x =
-                if x = cost_symbol then
-                  Ctx.mk_real QQ.zero
-                else
-                  Ctx.mk_const x
+      match cost_opt with 
+      | None -> (Format.printf "Could not find __cost variable\n")
+      | Some cost ->
+        (let cost_symbol = Cra.V.symbol_of cost in
+        let exists x =
+          match Cra.V.of_symbol x with
+          | Some v -> Core.Var.is_global (Cra.var_of_value v)
+          | None -> false
+        in
+        Format.printf "===== Resource-Usage Bounds =====\n";
+        RG.blocks rg |> BatEnum.iter (fun procedure ->
+            Format.printf "\n";
+            Format.printf "---- Summary of %a ----\n" Varinfo.pp procedure;
+            let entry = (RG.block_entry rg procedure).did in
+            let exit = (RG.block_exit rg procedure).did in
+            let summary = BURG.path_weight query entry exit in
+            Format.printf "@. procedure summary for bounds generation = @.";
+                print_indented 0 summary;
+                Format.printf "\n";
+            if K.mem_transform cost summary then begin
+              logf ~level:`always "Procedure: %a" Varinfo.pp procedure;
+              (* replace cost with 0, add constraint cost = rhs *)
+              let guard =
+                let subst x =
+                  if x = cost_symbol then
+                    Ctx.mk_real QQ.zero
+                  else
+                    Ctx.mk_const x
+                in
+                let rhs =
+                  Syntax.substitute_const Cra.srk subst (K.get_transform cost summary)
+                in
+                Ctx.mk_and [Syntax.substitute_const Cra.srk subst (K.guard summary);
+                            Ctx.mk_eq (Ctx.mk_const cost_symbol) rhs ]
               in
-              let rhs =
-                Syntax.substitute_const Cra.srk subst (K.get_transform cost summary)
-              in
-              Ctx.mk_and [Syntax.substitute_const Cra.srk subst (K.guard summary);
-                          Ctx.mk_eq (Ctx.mk_const cost_symbol) rhs ]
-            in
-            match Wedge.symbolic_bounds_formula ~exists Cra.srk guard cost_symbol with
-            | `Sat (lower, upper) ->
-              begin match lower with
-                | Some lower ->
-                  logf ~level:`always " %a <= cost" (Syntax.Term.pp Cra.srk) lower;
-                  logf ~level:`always " %a is o(%a)"
+              match Wedge.symbolic_bounds_formula ~exists Cra.srk guard cost_symbol with
+              | `Sat (lower, upper) ->
+                begin match lower with
+                  | Some lower ->
+                    logf ~level:`always " %a <= cost" (Syntax.Term.pp Cra.srk) lower;
+                    logf ~level:`always " %a is o(%a)"
+                      Varinfo.pp procedure
+                      BigO.pp (BigO.of_term Cra.srk lower)
+                  | None -> ()
+                end;
+                begin match upper with
+                  | Some upper ->
+                    logf ~level:`always " cost <= %a" (Syntax.Term.pp Cra.srk) upper;
+                    logf ~level:`always " %a is O(%a)"
                     Varinfo.pp procedure
-                    BigO.pp (BigO.of_term Cra.srk lower)
-                | None -> ()
-              end;
-              begin match upper with
-                | Some upper ->
-                  logf ~level:`always " cost <= %a" (Syntax.Term.pp Cra.srk) upper;
-                  logf ~level:`always " %a is O(%a)"
+                    BigO.pp (BigO.of_term Cra.srk upper)
+                  | None -> ()
+                end
+              | `Unsat ->
+                logf ~level:`always "%a is infeasible"
                   Varinfo.pp procedure
-                  BigO.pp (BigO.of_term Cra.srk upper)
-                | None -> ()
-              end
-            | `Unsat ->
-              logf ~level:`always "%a is infeasible"
-                Varinfo.pp procedure
-          end else
-          logf ~level:`always "Procedure %a has zero cost" Varinfo.pp procedure;
-          Format.printf "---------------------------------\n")
-      );
-      (* Assertion checking *)
-      if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
-      begin
-        Format.printf "Assertion checking\n";
-        let entry_main = (RG.block_entry rg main).did in
-        assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
-            let path = BURG.path_weight query entry_main v in
-            let sigma sym =
-              match Cra.V.of_symbol sym with
-              | Some v when K.mem_transform v path ->
-                K.get_transform v path
-              | _ -> Ctx.mk_const sym
-            in
-            let phi = Syntax.substitute_const Ctx.context sigma phi in
-            let path_condition =
-              Ctx.mk_and [K.guard path; Ctx.mk_not phi]
-              |> SrkSimplify.simplify_terms Cra.srk
-            in
-            logf "Path condition:@\n%a"
-              (Syntax.pp_smtlib2 Ctx.context) path_condition;
-            (*dump_goal loc path_condition;*)
-            match Wedge.is_sat Ctx.context path_condition with
-            | `Sat -> 
-              Report.log_error loc msg;
-              Format.printf "Assertion FAILED: %s\n" msg
-            | `Unsat -> 
-              Report.log_safe ();
-              Format.printf "Assertion PASSED: %s\n" msg
-            | `Unknown ->
-              logf ~level:`warn "Z3 inconclusive";
-              Report.log_error loc msg;
-              Format.printf "Assertion FAILED/INCONCLUSIVE: %s\n" msg
-              );
-        Format.printf "=================================\n";
-      end
+            end else
+            logf ~level:`always "Procedure %a has zero cost" Varinfo.pp procedure;
+            Format.printf "---------------------------------\n")
+        )
+    end;
+    (* Assertion checking *)
+    if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
+    begin
+      Format.printf "Assertion checking:\n";
+      let entry_main = (RG.block_entry rg main).did in
+      assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
+          let path = BURG.path_weight query entry_main v in
+          let sigma sym =
+            match Cra.V.of_symbol sym with
+            | Some v when K.mem_transform v path ->
+              K.get_transform v path
+            | _ -> Ctx.mk_const sym
+          in
+          let phi = Syntax.substitute_const Ctx.context sigma phi in
+          let path_condition =
+            Ctx.mk_and [K.guard path; Ctx.mk_not phi]
+            |> SrkSimplify.simplify_terms Cra.srk
+          in
+          logf "Path condition:@\n%a"
+            (Syntax.pp_smtlib2 Ctx.context) path_condition;
+          (*dump_goal loc path_condition;*)
+          match Wedge.is_sat Ctx.context path_condition with
+          | `Sat -> 
+            Report.log_error loc msg;
+            Format.printf "Assertion on line %d FAILED: %s\n" loc.Cil.line msg
+          | `Unsat -> 
+            Report.log_safe ();
+            Format.printf "Assertion on line %d PASSED: %s\n" loc.Cil.line msg
+          | `Unknown ->
+            logf ~level:`warn "Z3 inconclusive";
+            Report.log_error loc msg;
+            Format.printf "Assertion on line %d FAILED/INCONCLUSIVE: %s\n" loc.Cil.line msg
+            );
+      Format.printf "=================================\n";
+    end
 
     end
   (* *)
