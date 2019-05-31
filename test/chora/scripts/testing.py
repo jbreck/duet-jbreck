@@ -14,6 +14,7 @@ def parent(k,d) :
     return parent(k-1,os.path.dirname(d))
 
 testroot = parent(2,os.path.realpath(__file__))
+benchroot = os.path.join(testroot,"benchmarks/")
 
 chora = dict() 
 chora["ID"] = "chora"
@@ -25,6 +26,10 @@ def defaulting_field(d,*fields) :
         print "TEST SCRIPT ERROR: missing field in tool description: " + str(d)
     if fields[0] in d : return d[fields[0]]
     return defaulting_field(d,*fields[1:])
+
+def yes_post_slash(d) :
+    if d[-1] == "/" : return d
+    return d + "/"
 
 tool_IDs = set()
 class Tool :
@@ -74,7 +79,7 @@ tool_dicts = [chora]
 alltools = {D["ID"]:Tool(D) for D in tool_dicts}
 
 batch = dict()
-batch["files"] = glob.glob(testroot + "/RBA_*.c")
+batch["files"] = glob.glob(benchroot + "rba/*.c")
 batch["timeout"] = 300
 batch["toolIDs"] = sorted(alltools.keys())
 batch["style"] = "rba"
@@ -160,9 +165,12 @@ def run(batch, stamp) :
     with open(runlogpath,"wb") as runlog :
         for filename in sorted(batch["files"]) :
             nicename = filename
-            if nicename.startswith(testroot+"/") : nicename = nicename[len(testroot)+1:]
+            br_prefix = yes_post_slash(benchroot)
+            if nicename.startswith(br_prefix) : nicename = nicename[len(br_prefix):]
             sys.stdout.write(" " + nicename + " ")
-            shutil.copyfile(filename, outsources + nicename)
+            sourcedest = outsources + nicename
+            makedirs(os.path.dirname(sourcedest))
+            shutil.copyfile(filename, sourcedest)
             for tool in tools : 
                 cmd = [S.format(filename=filename) for S in tool.cmd]
                 logfilename = outrun + "/logs/" + nicename + "." + tool.ID + ".log"
@@ -190,6 +198,9 @@ def run(batch, stamp) :
                 runlogline += "tool="+tool.ID+"\t"
                 runlogline += "exit="+exitType+"\t"
                 runlogline += "time="+str(timeTaken)+"\t"
+                #runlogline += "runid="+stamp+"\t" # maybe?
+                #trialNo = 0
+                #runlogline += "trial="+trialNo+"\t" # maybe?
                 print >>runlog, runlogline
             print "" 
 
