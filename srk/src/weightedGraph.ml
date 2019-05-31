@@ -686,7 +686,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
         in      
         List.rev (CallGraphSCCs.scc_list callgraph) (* = callgraph_sccs *)
         in 
-      Format.printf "Number of SCCs in call graph is %d." (List.length callgraph_sccs);
+      Format.printf "Number of SCCs in call graph is %d.@." (List.length callgraph_sccs);
       let summaries = ref (M.map (fun _ -> W.zero) call_pathexpr) in
       let rec summarize_sccs scc_list =
         match scc_list with 
