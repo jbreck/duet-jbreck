@@ -48,14 +48,15 @@ def chora_bounds_callout(params) :
         mode = 0
         for line in logfile :
             if mode == 0 : 
-                if line.startswith("---- Summary of"):
+                if line.startswith("---- Bounds on"):
                     output += line
-                    mode = 1
+                    #mode = 1
+                    mode = 2 
                     continue
-            if mode == 1 :
-                if line.startswith("Procedure: "):
-                    mode = 2
-                    continue
+            #if mode == 1 :
+            #    if line.startswith("Procedure: "):
+            #        mode = 2
+            #        continue
             if mode == 2 :
                 if line.startswith("-----"):
                     mode = 0

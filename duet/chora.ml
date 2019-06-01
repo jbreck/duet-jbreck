@@ -34,7 +34,7 @@ end)
 
 (* ugly: copied from newtonDomain just for debugging *)
 let print_indented indent k =
-      Format.printf "%s"
+      logf ~level:`info "%s"
       (SrkUtil.mk_show (fun formatter tr ->
           Format.pp_open_vbox formatter indent;
           Format.pp_print_break formatter 0 0;
@@ -47,7 +47,7 @@ let post_symbol =
     | Some var ->
       (*let newsym = Srk.Syntax.mk_symbol Cra.srk ~name:("postrec_" ^ Var.show var) (Var.typ var :> Srk.Syntax.typ) in*)
       let newsym = Srk.Syntax.mk_symbol Cra.srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ) in
-      (*Format.printf "New Symbol Created!  old=%s  new=%s\n" 
+      (*logf ~level:`info "New Symbol Created!  old=%s  new=%s\n" 
         (Srk.Syntax.show_symbol Cra.srk sym)
         (Srk.Syntax.show_symbol Cra.srk newsym); *)
       newsym
@@ -107,7 +107,7 @@ let increment_variable value =
 (* Make bound analysis? *)
 let mk_call_abstraction base_case_weight = 
   let (tr_symbols, body) = to_transition_formula base_case_weight in
-  (*Format.printf "  transition_formula_body: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) body;*)
+  (*logf ~level:`info "  transition_formula_body: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) body;*)
   let projection x = 
     (* FIXME: THIS IS QUICK AND DIRTY *)
     (* FIXME: remove this clause*)
@@ -118,14 +118,14 @@ let mk_call_abstraction base_case_weight =
     | None -> false (* false *)
   in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
-  Format.printf "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
+  logf ~level:`info "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
   let cs = Wedge.coordinate_system wedge in 
   let bounding_atoms = ref [] in
   let bound_list = ref [] in
   let add_bounding_var vec negate =
       let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
       let term = CoordinateSystem.term_of_vec cs vec in 
-      (*Format.printf "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;*)
+      (*logf ~level:`info "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;*)
     let bounding_var = Core.Var.mk (Core.Varinfo.mk_global "B_in" ( Core.Concrete (Core.Int 32))) in 
     let bounding_var_sym = Cra.V.symbol_of (Cra.VVal bounding_var) in 
     (*let bounding_var_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"B_in" `TyInt in *)
@@ -135,7 +135,7 @@ let mk_call_abstraction base_case_weight =
     bound_list     := (bounding_var_sym, term) :: (!bound_list) in
   let handle_constraint = function 
     | (`Eq, vec) ->
-      (*Format.printf "  rec equation: %a \n" Linear.QQVector.pp vec;*)
+      (*logf ~level:`info "  rec equation: %a \n" Linear.QQVector.pp vec;*)
       add_bounding_var vec true; 
       add_bounding_var vec false
     | (`Geq, vec) ->
@@ -174,7 +174,7 @@ type recurrence_candidate = {
 let accept_candidate candidate recurrences = 
   BatDynArray.add recurrences.term_of_id (Srk.Syntax.mk_const Cra.srk candidate.inner_sym);
   let new_num = recurrences.n_recs_accepted in 
-  Format.printf "   Accepted candidate recurrence: inner_sym=%d rec_num=%d@." (Srk.Syntax.int_of_symbol candidate.inner_sym) new_num;
+  logf ~level:`info "   Accepted candidate recurrence: inner_sym=%d rec_num=%d@." (Srk.Syntax.int_of_symbol candidate.inner_sym) new_num;
   {done_symbols = 
       if Srk.Syntax.Symbol.Map.mem candidate.inner_sym recurrences.done_symbols 
       then recurrences.done_symbols
@@ -235,7 +235,7 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
   let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
   let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
   let inner_rec_num = BatMap.Int.find target_inner_dim sub_dim_to_rec_num in 
-  Format.printf "   blk_start %d@.   max_rec_number %d@.   inner_rec_num %d@.   nb_recs_in_block %d@.   blk_last %d@.   target_inner_sym %d@." 
+  logf ~level:`info "   blk_start %d@.   max_rec_number %d@.   inner_rec_num %d@.   nb_recs_in_block %d@.   blk_last %d@.   target_inner_sym %d@." 
     blk_start max_rec_number inner_rec_num (Array.length blk_transform) blk_last (Srk.Syntax.int_of_symbol target_inner_sym);
   assert (inner_rec_num >= blk_start);
   (* Now process a constant offset *)
@@ -272,7 +272,7 @@ let mk_height_based_summary
   (* Make a formula from top_down_summary and get the post-state height symbol *)
   let top_down_symbols, top_down_formula = 
     K.to_transition_formula (K.mul (K.mul top_down_summary base) top) in
-  Format.printf "@.    tdf: %a@." 
+  logf ~level:`info "@.    tdf: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) top_down_formula; 
   let is_post_height (pre_sym,post_sym) = (pre_sym == ht_var_sym) in 
   let post_height_sym = 
@@ -285,7 +285,7 @@ let mk_height_based_summary
     K.mul (K.mul initially_no_recursion recursive_weight) eventually_recursion in
   (* ASSUME B_in NON-NEGATIVE*)
   let (tr_symbols, body) = to_transition_formula recursive_weight in
-  Format.printf "  transition_formula_body: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) body;
+  logf ~level:`info "  transition_formula_body: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) body;
   let b_out_definitions = ref [] in 
   let b_in_b_out_pairs = ref [] in 
   let b_in_b_out_map = ref Srk.Syntax.Symbol.Map.empty in 
@@ -297,7 +297,7 @@ let mk_height_based_summary
     (*let lhs = Srk.Syntax.mk_const Cra.srk sym in *) 
     let rhs = term in 
     let b_out_constraint = Srk.Syntax.mk_leq Cra.srk lhs rhs in (* was: mk_eq *)
-    Format.printf "  bounded term: %a ~ %t ~ %t @." 
+    logf ~level:`info "  bounded term: %a ~ %t ~ %t @." 
       (Srk.Syntax.Term.pp Cra.srk) term
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym);
@@ -308,13 +308,13 @@ let mk_height_based_summary
     b_out_symbols := Srk.Syntax.Symbol.Set.add outer_sym (!b_out_symbols) in 
   List.iter add_b_out_definition bounds.bound_pairs; 
   let b_out_conjunction = Srk.Syntax.mk_and Cra.srk (!b_out_definitions) in 
-  (*Format.printf "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
+  (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
   let full_conjunction = Srk.Syntax.mk_and Cra.srk [body; b_out_conjunction] in 
   let projection sym = 
     Srk.Syntax.Symbol.Set.mem sym !b_in_symbols || 
     Srk.Syntax.Symbol.Set.mem sym !b_out_symbols in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk full_conjunction in 
-  Format.printf "\n  extraction_wedge = @.%t@. \n\n" (fun f -> Wedge.pp f wedge); 
+  logf ~level:`info "\n  extraction_wedge = @.%t@. \n\n" (fun f -> Wedge.pp f wedge); 
   (* *)
   let recurrence_candidates = ref [] in
   (*let best_self_coefficient = ref Srk.Syntax.Symbol.Map.empty in *)
@@ -445,14 +445,14 @@ let mk_height_based_summary
           begin 
           (* We've identified a recurrence; now we'll put together the data 
             structures we'll need to solve it.  *)
-          Format.printf "  Recurrence: %a@." 
+          logf ~level:`info "  Recurrence: %a@." 
               (Srk.Syntax.Term.pp Cra.srk) term;  
-          Format.printf "    before filter: %a @." Linear.QQVector.pp vec;
-          Format.printf "     after filter: %a @." Linear.QQVector.pp new_vec;
+          logf ~level:`info "    before filter: %a @." Linear.QQVector.pp vec;
+          logf ~level:`info "     after filter: %a @." Linear.QQVector.pp new_vec;
           let one_over_outer_coeff = QQ.inverse outer_coeff in 
           let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
           let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
-          Format.printf "      inner_coeff: %a @." QQ.pp inner_coeff;  
+          logf ~level:`info "      inner_coeff: %a @." QQ.pp inner_coeff;  
 
           recurrence_candidates := {outer_sym=target_outer_sym;
                                     inner_sym=target_inner_sym;
@@ -492,7 +492,7 @@ let mk_height_based_summary
     (*        AND in the future maybe prioritize recurrences    *)
     (*   Don't extract more than one recurrence for each symbol *)
     let rec filter_candidates () =
-      Format.printf "  Filtering recurrence candidates @.";
+      logf ~level:`info "  Filtering recurrence candidates @.";
       begin
         let nb_recurs = List.length !recurrence_candidates in 
         let earlier_candidates = ref Srk.Syntax.Symbol.Set.empty in 
@@ -537,9 +537,9 @@ let mk_height_based_summary
         if (List.length !recurrence_candidates) < nb_recurs
         then filter_candidates ()
       end in 
-    (*Format.printf "  N candidates before filter: %d@." (List.length !recurrence_candidates);*)
+    (*logf ~level:`info "  N candidates before filter: %d@." (List.length !recurrence_candidates);*)
     filter_candidates ();
-    (*Format.printf "  N candidates after filter:  %d@." (List.length !recurrence_candidates);*)
+    (*logf ~level:`info "  N candidates after filter:  %d@." (List.length !recurrence_candidates);*)
     
     (* PHASE: accept remaining recurrence candidates *) 
     let foreach_candidate_accept recurrences candidate = 
@@ -552,7 +552,7 @@ let mk_height_based_summary
     let foreach_block_build recurrences candidate_block = 
       if List.length candidate_block = 0 then recurrences else
       let nRecurs = List.length candidate_block in 
-      (*Format.printf "  Beginning a block of size: %d@." (nRecurs);*)
+      (*logf ~level:`info "  Beginning a block of size: %d@." (nRecurs);*)
       let blk_transform = Array.make_matrix nRecurs nRecurs QQ.zero in 
       let foreach_candidate_build add_entries candidate = 
         let sub_dim_to_rec_num = 
@@ -564,7 +564,7 @@ let mk_height_based_summary
         List.fold_left 
           foreach_candidate_build [] candidate_block in 
       let blk_add = Array.of_list (List.rev add_entries) in (* REV entries to match term_of_id *) 
-      (*Format.printf "  Registering add block of size: %d@." (Array.length blk_add);*)
+      (*logf ~level:`info "  Registering add block of size: %d@." (Array.length blk_add);*)
       register_recurrence blk_transform blk_add recurrences in 
     let recurrences = 
       if not allow_interdependence then 
@@ -575,7 +575,7 @@ let mk_height_based_summary
       else 
         (* The list of all candidates forms a recurrence block *)
         foreach_block_build recurrences !recurrence_candidates in
-    Format.printf "  [ -- end of stratum -- ]@.";
+    logf ~level:`info "  [ -- end of stratum -- ]@.";
     (* Did we get new recurrences? If so, then look for a higher stratum. *)
     if count_recurrences recurrences > nb_previous_recurrences then 
       extract_recurrences recurrences false
@@ -590,7 +590,7 @@ let mk_height_based_summary
   let term_of_id = BatDynArray.to_array recurrences.term_of_id in 
   let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
   let nb_constants = (* just inserting a test print *)
-          0 (*(Format.printf "      got here@."; 0)*)
+          0 (*(logf ~level:`info "      got here@."; 0)*)
   in
   (* Change to pairs of transform_add blocks *)
   (* Add the appropriate constraint to the loop counter, so K >= 0 *)
@@ -599,7 +599,7 @@ let mk_height_based_summary
                   Cra.srk recurrences.ineq_tr loop_counter term_of_id 
                   nb_constants recurrences.blk_transforms 
                   recurrences.blk_adds in 
-  Format.printf "@.    solution: %a@." 
+  logf ~level:`info "@.    solution: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) solution;
   (* *)
   let subst_b_in_with_zeros sym = 
@@ -609,7 +609,7 @@ let mk_height_based_summary
   let solution_starting_at_zero = 
     Srk.Syntax.substitute_const Cra.srk subst_b_in_with_zeros solution in 
   (* let simpler = SrkSimplify.simplify_terms Cra.srk with_zeros in *)
-  Format.printf "@.    simplified: %a@." 
+  logf ~level:`info "@.    simplified: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;
   let bounding_conjunction = 
     let make_bounding_conjuncts (in_sym,term) =
@@ -621,13 +621,13 @@ let mk_height_based_summary
     let bounding_conjuncts = 
       List.map make_bounding_conjuncts bounds.bound_pairs in 
     Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
-  Format.printf "@.    bddg conj: %a@." 
+  logf ~level:`info "@.    bddg conj: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) bounding_conjunction; 
   let big_conjunction = 
     Srk.Syntax.mk_and Cra.srk [top_down_formula; 
                                solution_starting_at_zero;
                                bounding_conjunction] in
-  Format.printf "@.    big conj: %a@." 
+  logf ~level:`info "@.    big conj: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) big_conjunction; 
   (* FIXME: I should really be iterating over the SCC footprint variables,
             not over the list of all program variables. *)
@@ -637,9 +637,9 @@ let mk_height_based_summary
       let post_sym = post_symbol pre_sym in 
       (pre_sym,post_sym) ) program_vars in 
   let height_based_summary = of_transition_formula final_tr_symbols big_conjunction in 
-  Format.printf "@.    ht_summary = ";
+  logf ~level:`info "@.    ht_summary = ";
   print_indented 17 height_based_summary;
-  Format.printf "\n";
+  logf ~level:`info "\n";
   let projection x = 
     (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false final_tr_symbols)
     (*||
@@ -648,7 +648,7 @@ let mk_height_based_summary
     | None -> false*)
   in 
   let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
-  Format.printf "\n    wedgified = %t \n\n" (fun f -> Wedge.pp f wedge_summary);
+  logf ~level:`info "\n    wedgified = %t \n\n" (fun f -> Wedge.pp f wedge_summary);
   height_based_summary
   (* Things to do: 
      - construct a havoc-like transition with post variables,
@@ -679,9 +679,9 @@ let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.sc
     | `Zero | `One -> IntPairSet.empty
   in
   let call_edges = eval pe_call_edge_set pathexpr in 
-  Format.printf "  calls = [ ";
-  IntPairSet.iter (fun (s,t) -> Format.printf "(%d,%d) " s t) call_edges;
-  Format.printf "]\n";
+  logf ~level:`info "  calls = [ ";
+  IntPairSet.iter (fun (s,t) -> logf ~level:`info "(%d,%d) " s t) call_edges;
+  logf ~level:`info "]\n";
   call_edges
 
 let make_top_down_summary p_entry path_weight_internal top call_edges = 
@@ -691,20 +691,20 @@ let make_top_down_summary p_entry path_weight_internal top call_edges =
   let set_height_zero = assign_value_to_literal height_var_val 0 in 
   let increment_height = increment_variable height_var_val in 
   let weight_of_call_top cs ct cen cex = project top in 
-  Format.printf "  fragments = [";
+  logf ~level:`info "  fragments = [";
   let sum_of_fragments = IntPairSet.fold (fun (s,t) running_total -> 
     let fragment_weight = path_weight_internal p_entry s weight_of_call_top in
-    (* (Format.printf "  << %t >> \n" (fun f -> Pathexpr.pp f fragment_weight)) *)
+    (* (logf ~level:`info "  << %t >> \n" (fun f -> Pathexpr.pp f fragment_weight)) *)
     (* Format.fprintf Format.std_formatter "<<( %a )>> \n" K.pp fragment_weight *)
     print_indented 15 fragment_weight;
-    Format.printf "\n";
+    logf ~level:`info "\n";
     K.add running_total fragment_weight
     ) call_edges K.zero in
-  Format.printf "  ]\n";
+  logf ~level:`info "  ]\n";
   let phi_td = K.mul set_height_zero (K.star (K.mul increment_height sum_of_fragments)) in
-  Format.printf "  phi_td = [";
+  logf ~level:`info "  phi_td = [";
   print_indented 15 phi_td;
-  Format.printf "  ]\n";
+  logf ~level:`info "  ]\n";
   phi_td, height_var_sym;;
 
 let analyze_chora file =
@@ -715,7 +715,7 @@ let analyze_chora file =
     let (ts, assertions) = Cra.make_transition_system rg in
     let program_vars = 
       let open CfgIr in let file = get_gfile() in
-      (*List.iter (fun vi -> (Format.printf "       var %t @." (fun f -> Varinfo.pp f vi))) file.vars; *)
+      (*List.iter (fun vi -> (logf ~level:`info "       var %t @." (fun f -> Varinfo.pp f vi))) file.vars; *)
       (* let vars = List.filter (fun vi -> not (CfgIr.defined_function vi file)) file.vars in *)
       (*let vars = List.filter (fun vi -> 
         match Core.Varinfo.get_type vi with 
@@ -735,12 +735,12 @@ let analyze_chora file =
           never_addressed_functions
         )) file.vars in 
   
-      (*List.iter (fun vi -> (Format.printf "  true var %t @." (fun f -> Varinfo.pp f vi))) vars;*)
+      (*List.iter (fun vi -> (logf ~level:`info "  true var %t @." (fun f -> Varinfo.pp f vi))) vars;*)
       List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in 
     let top = K.havoc program_vars in 
     let summarizer (scc : BURG.scc) path_weight_internal = 
-      Format.printf "I saw an SCC:\n";
-      List.iter (fun (u,v,p) -> (Format.printf "  Proc(%d,%d) = %t \n" u v (fun f -> Pathexpr.pp f p))) scc.procs;
+      logf ~level:`info "I saw an SCC:\n";
+      List.iter (fun (u,v,p) -> (logf ~level:`info "  Proc(%d,%d) = %t \n" u v (fun f -> Pathexpr.pp f p))) scc.procs;
       let summaries = List.map (fun (p_entry,p_exit,pathexpr) ->
         let weight_of_call_zero cs ct cen cex = K.zero in
         let call_edges = find_recursive_calls ts pathexpr scc in 
@@ -750,22 +750,22 @@ let analyze_chora file =
         let (top_down_summary, ht_var_sym) = 
           make_top_down_summary p_entry path_weight_internal top call_edges in
         let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in
-        Format.printf "  base_case = [";
+        logf ~level:`info "  base_case = [";
         print_indented 15 base_case_weight;
-        Format.printf "  ]\n";
+        logf ~level:`info "  ]\n";
         (* *)
         let bounds = mk_call_abstraction base_case_weight in 
-        Format.printf "  call_abstration = [";
+        logf ~level:`info "  call_abstration = [";
         print_indented 15 bounds.call_abstraction;
-        Format.printf "  ]\n";
+        logf ~level:`info "  ]\n";
         let weight_of_call_rec cs ct cen cex = 
           if cen == p_entry && cex == p_exit then bounds.call_abstraction
           else failwith "Mutual recursion not implemented"
         in
         let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
-        Format.printf "  recursive_weight = [";
+        logf ~level:`info "  recursive_weight = [";
         print_indented 15 recursive_weight;
-        Format.printf "  ]\n";
+        logf ~level:`info "  ]\n";
         let height_based_summary = 
           mk_height_based_summary bounds recursive_weight top_down_summary ht_var_sym program_vars base_case_weight top in
         (p_entry,p_exit,height_based_summary)) scc.procs in 
@@ -784,7 +784,7 @@ let analyze_chora file =
         with Not_found -> None
       in
       match cost_opt with 
-      | None -> (Format.printf "Could not find __cost variable\n")
+      | None -> (logf ~level:`info "Could not find __cost variable\n")
       | Some cost ->
         (let cost_symbol = Cra.V.symbol_of cost in
         let exists x =
@@ -794,16 +794,17 @@ let analyze_chora file =
         in
         Format.printf "===== Resource-Usage Bounds =====\n";
         RG.blocks rg |> BatEnum.iter (fun procedure ->
-            Format.printf "\n";
-            Format.printf "---- Summary of %a ----\n" Varinfo.pp procedure;
+            (*Format.printf "\n";*)
             let entry = (RG.block_entry rg procedure).did in
             let exit = (RG.block_exit rg procedure).did in
             let summary = BURG.path_weight query entry exit in
-            Format.printf "@. procedure summary for bounds generation = @.";
+            logf ~level:`info "---------------------------------\n";
+            logf ~level:`info "@. -- Procedure summary for %a = @." Varinfo.pp procedure;
                 print_indented 0 summary;
-                Format.printf "\n";
+                logf ~level:`info "@.@.";
+            Format.printf "---- Bounds on the cost of %a@." Varinfo.pp procedure;
             if K.mem_transform cost summary then begin
-              logf ~level:`always "Procedure: %a" Varinfo.pp procedure;
+              (*logf ~level:`always "Procedure: %a" Varinfo.pp procedure;*)
               (* replace cost with 0, add constraint cost = rhs *)
               let guard =
                 let subst x =
@@ -847,7 +848,7 @@ let analyze_chora file =
     (* Assertion checking *)
     if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
     begin
-      Format.printf "Assertion checking:\n";
+      Format.printf "======= Assertion Checking ======\n";
       let entry_main = (RG.block_entry rg main).did in
       assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
           let path = BURG.path_weight query entry_main v in
