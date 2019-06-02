@@ -103,6 +103,18 @@ let increment_variable value =
       [(Srk.Syntax.mk_const Cra.srk (Cra.V.symbol_of value));
        (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int 1))])
 
+(*let debug_print_wedge_of_transition tr = 
+  let (tr_symbols, body) = to_transition_formula tr in
+  let projection x = 
+    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
+    || 
+    match Cra.V.of_symbol x with 
+    | Some v -> Cra.V.is_global v
+    | None -> false (* false *)
+  in 
+  let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
+  logf ~level:`info "\n  wedgified for debugging = %t \n\n" (fun f -> Wedge.pp f wedge)*)
+
 (* PASS REC FLAG IN FROM OUTSIDE *)
 (* Make bound analysis? *)
 let mk_call_abstraction base_case_weight = 
@@ -272,7 +284,7 @@ let mk_height_based_summary
   (* Make a formula from top_down_summary and get the post-state height symbol *)
   let top_down_symbols, top_down_formula = 
     K.to_transition_formula (K.mul (K.mul top_down_summary base) top) in
-  logf ~level:`info "@.    tdf: %a@." 
+  logf ~level:`info "@.  tdf: %a@." 
       (Srk.Syntax.Formula.pp Cra.srk) top_down_formula; 
   let is_post_height (pre_sym,post_sym) = (pre_sym == ht_var_sym) in 
   let post_height_sym = 
@@ -297,7 +309,7 @@ let mk_height_based_summary
     (*let lhs = Srk.Syntax.mk_const Cra.srk sym in *) 
     let rhs = term in 
     let b_out_constraint = Srk.Syntax.mk_leq Cra.srk lhs rhs in (* was: mk_eq *)
-    logf ~level:`info "  bounded term: %a ~ %t ~ %t @." 
+    logf ~level:`info "  [TERM]: %a ~ %t ~ %t @." 
       (Srk.Syntax.Term.pp Cra.srk) term
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym);
@@ -306,7 +318,9 @@ let mk_height_based_summary
     b_in_b_out_map := Srk.Syntax.Symbol.Map.add inner_sym outer_sym !b_in_b_out_map;
     b_in_symbols  := Srk.Syntax.Symbol.Set.add inner_sym (!b_in_symbols);
     b_out_symbols := Srk.Syntax.Symbol.Set.add outer_sym (!b_out_symbols) in 
+  logf ~level:`info "[Chora] Finding bounded terms:@.";
   List.iter add_b_out_definition bounds.bound_pairs; 
+  logf ~level:`info "        Finished bounded terms.@.";
   let b_out_conjunction = Srk.Syntax.mk_and Cra.srk (!b_out_definitions) in 
   (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
   let full_conjunction = Srk.Syntax.mk_and Cra.srk [body; b_out_conjunction] in 
@@ -314,7 +328,7 @@ let mk_height_based_summary
     Srk.Syntax.Symbol.Set.mem sym !b_in_symbols || 
     Srk.Syntax.Symbol.Set.mem sym !b_out_symbols in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk full_conjunction in 
-  logf ~level:`info "\n  extraction_wedge = @.%t@. \n\n" (fun f -> Wedge.pp f wedge); 
+  logf ~level:`info "@.  extraction_wedge = @.%t@. @.@." (fun f -> Wedge.pp f wedge); 
   (* *)
   let recurrence_candidates = ref [] in
   (*let best_self_coefficient = ref Srk.Syntax.Symbol.Map.empty in *)
@@ -327,6 +341,7 @@ let mk_height_based_summary
        symbol and all inner bounding symbols *)
   (* Note: we do all projections together, before the stratum-loop *)
   (* Change this to iterate over b_in_symbols, maybe? *)
+  logf ~level:`info "@.  Building wedge map...@."; 
   let wedge_map = 
     let add_wedge_to_map map (target_inner_sym, _) = 
       let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym !b_in_b_out_map in
@@ -339,6 +354,7 @@ let mk_height_based_summary
       add_wedge_to_map 
       Srk.Syntax.Symbol.Map.empty
       bounds.bound_pairs in 
+  logf ~level:`info "@.  Finished wedge map.@."; 
   (* *)
   let is_negative q = ((QQ.compare q QQ.zero) < 0) in
   let is_non_negative q = ((QQ.compare q QQ.zero) >= 0) in
@@ -360,12 +376,20 @@ let mk_height_based_summary
     (* *) 
     (* This function is applied to each B_in symbol *) 
     let extract_recurrence_for_symbol (target_inner_sym, _) = 
+      logf ~level:`info "  Attempting extraction for %t DELETEME.@." 
+        (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_inner_sym);
       (* First, check whether we've already extracted a recurrence for this symbol *)
       if have_recurrence target_inner_sym recurrences then () else 
-      begin
+      if not (Srk.Syntax.Symbol.Map.mem target_inner_sym !b_in_b_out_map) then () else 
+      if not (Srk.Syntax.Symbol.Map.mem target_inner_sym wedge_map) then () else 
       let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym !b_in_b_out_map in
       let sub_wedge = Srk.Syntax.Symbol.Map.find target_inner_sym wedge_map in 
       let sub_cs = Wedge.coordinate_system sub_wedge in
+      if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_inner_sym)) then () else
+      if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym)) then () else
+      begin
+      let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
+      let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
       (* *) 
       (* This function is applied to each inequation in sub_wedge *)
       let process_inequation vec negate = 
@@ -432,8 +456,11 @@ let mk_height_based_summary
         match examine_coeffs_and_dims [] [] with 
         | None -> ()
         | Some (new_coeffs_and_dims, dep_accum) -> 
+          logf ~level:`info "@.  Found a possible inequation...DELETEME@.";
+          (*
           let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
           let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
+          *)
 
           (*let sub_dim_to_rec_num = build_sub_dim_to_rec_num_map recurrences sub_cs in*)
           let term = CoordinateSystem.term_of_vec sub_cs vec in 
@@ -445,8 +472,7 @@ let mk_height_based_summary
           begin 
           (* We've identified a recurrence; now we'll put together the data 
             structures we'll need to solve it.  *)
-          logf ~level:`info "  Recurrence: %a@." 
-              (Srk.Syntax.Term.pp Cra.srk) term;  
+          logf ~level:`info "  [REC] %a@." (Srk.Syntax.Term.pp Cra.srk) term;  
           logf ~level:`info "    before filter: %a @." Linear.QQVector.pp vec;
           logf ~level:`info "     after filter: %a @." Linear.QQVector.pp new_vec;
           let one_over_outer_coeff = QQ.inverse outer_coeff in 
@@ -469,7 +495,9 @@ let mk_height_based_summary
       List.iter process_constraint (Wedge.polyhedron sub_wedge) 
       end 
       in
+    logf ~level:`info "[Chora] Recurrence extraction:@.";
     List.iter extract_recurrence_for_symbol bounds.bound_pairs;
+    logf ~level:`info "        Finished recurrence extraction.@.";
     (* *)
     (* 
     (* Scan for the lowest self-coefficent that each B_out has*)
@@ -802,6 +830,7 @@ let analyze_chora file =
             logf ~level:`info "@. -- Procedure summary for %a = @." Varinfo.pp procedure;
                 print_indented 0 summary;
                 logf ~level:`info "@.@.";
+            (*debug_print_wedge_of_transition summary;*)
             Format.printf "---- Bounds on the cost of %a@." Varinfo.pp procedure;
             if K.mem_transform cost summary then begin
               (*logf ~level:`always "Procedure: %a" Varinfo.pp procedure;*)
