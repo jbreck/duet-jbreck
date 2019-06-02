@@ -184,7 +184,7 @@ icra_dirs = ["c4b", "misc-recursive", "duet", "", "STAC/polynomial/assert",
 # maybe make this a lambda?
 icrabatch["files"] = []
 try :
-    icrabatch["files"] = [os.path.join(D,F) for D,Fs in 
+    icrabatch["files"] = [os.path.join(icrabatch["root"],D,F) for D,Fs in 
            [(D, os.listdir(os.path.join(icrabatch["root"],D))) for D in icra_dirs]
         for F in Fs if F.endswith(".c")] 
 except : pass
