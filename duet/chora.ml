@@ -186,7 +186,7 @@ type recurrence_candidate = {
 let accept_candidate candidate recurrences = 
   BatDynArray.add recurrences.term_of_id (Srk.Syntax.mk_const Cra.srk candidate.inner_sym);
   let new_num = recurrences.n_recs_accepted in 
-  logf ~level:`info "   Accepted candidate recurrence: inner_sym=%d rec_num=%d@." (Srk.Syntax.int_of_symbol candidate.inner_sym) new_num;
+  logf ~level:`trace "   Accepted candidate recurrence: inner_sym=%d rec_num=%d@." (Srk.Syntax.int_of_symbol candidate.inner_sym) new_num;
   {done_symbols = 
       if Srk.Syntax.Symbol.Map.mem candidate.inner_sym recurrences.done_symbols 
       then recurrences.done_symbols
@@ -210,7 +210,7 @@ let register_recurrence transform_block add_block recurrences =
    n_recs_accepted = recurrences.n_recs_accepted;
    n_recs_specified = recurrences.n_recs_specified + (Array.length transform_block)};;
 
-let empty_recurrence_collection = 
+let empty_recurrence_collection () = 
   {done_symbols = Srk.Syntax.Symbol.Map.empty;
    ineq_tr = [];
    blk_transforms = [];
@@ -247,7 +247,7 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
   let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
   let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
   let inner_rec_num = BatMap.Int.find target_inner_dim sub_dim_to_rec_num in 
-  logf ~level:`info "   blk_start %d@.   max_rec_number %d@.   inner_rec_num %d@.   nb_recs_in_block %d@.   blk_last %d@.   target_inner_sym %d@." 
+  logf ~level:`trace "   blk_start %d@.   max_rec_number %d@.   inner_rec_num %d@.   nb_recs_in_block %d@.   blk_last %d@.   target_inner_sym %d@." 
     blk_start max_rec_number inner_rec_num (Array.length blk_transform) blk_last (Srk.Syntax.int_of_symbol target_inner_sym);
   assert (inner_rec_num >= blk_start);
   (* Now process a constant offset *)
@@ -320,7 +320,7 @@ let mk_height_based_summary
     b_out_symbols := Srk.Syntax.Symbol.Set.add outer_sym (!b_out_symbols) in 
   logf ~level:`info "[Chora] Finding bounded terms:@.";
   List.iter add_b_out_definition bounds.bound_pairs; 
-  logf ~level:`info "        Finished bounded terms.@.";
+  logf ~level:`trace "        Finished bounded terms.@.";
   let b_out_conjunction = Srk.Syntax.mk_and Cra.srk (!b_out_definitions) in 
   (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
   let full_conjunction = Srk.Syntax.mk_and Cra.srk [body; b_out_conjunction] in 
@@ -328,7 +328,7 @@ let mk_height_based_summary
     Srk.Syntax.Symbol.Set.mem sym !b_in_symbols || 
     Srk.Syntax.Symbol.Set.mem sym !b_out_symbols in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk full_conjunction in 
-  logf ~level:`info "@.  extraction_wedge = @.%t@. @.@." (fun f -> Wedge.pp f wedge); 
+  logf ~level:`info "  extraction_wedge = @.%t@. @.@." (fun f -> Wedge.pp f wedge); 
   (* *)
   let recurrence_candidates = ref [] in
   (*let best_self_coefficient = ref Srk.Syntax.Symbol.Map.empty in *)
@@ -341,7 +341,7 @@ let mk_height_based_summary
        symbol and all inner bounding symbols *)
   (* Note: we do all projections together, before the stratum-loop *)
   (* Change this to iterate over b_in_symbols, maybe? *)
-  logf ~level:`info "@.  Building wedge map...@."; 
+  logf ~level:`trace "  Building wedge map...@."; 
   let wedge_map = 
     let add_wedge_to_map map (target_inner_sym, _) = 
       let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym !b_in_b_out_map in
@@ -354,7 +354,7 @@ let mk_height_based_summary
       add_wedge_to_map 
       Srk.Syntax.Symbol.Map.empty
       bounds.bound_pairs in 
-  logf ~level:`info "@.  Finished wedge map.@."; 
+  logf ~level:`trace "  Finished wedge map.@."; 
   (* *)
   let is_negative q = ((QQ.compare q QQ.zero) < 0) in
   let is_non_negative q = ((QQ.compare q QQ.zero) >= 0) in
@@ -376,8 +376,8 @@ let mk_height_based_summary
     (* *) 
     (* This function is applied to each B_in symbol *) 
     let extract_recurrence_for_symbol (target_inner_sym, _) = 
-      logf ~level:`info "  Attempting extraction for %t DELETEME.@." 
-        (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_inner_sym);
+      (*logf ~level:`info "  Attempting extraction for %t DELETEME.@." 
+        (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_inner_sym);*)
       (* First, check whether we've already extracted a recurrence for this symbol *)
       if have_recurrence target_inner_sym recurrences then () else 
       if not (Srk.Syntax.Symbol.Map.mem target_inner_sym !b_in_b_out_map) then () else 
@@ -456,7 +456,7 @@ let mk_height_based_summary
         match examine_coeffs_and_dims [] [] with 
         | None -> ()
         | Some (new_coeffs_and_dims, dep_accum) -> 
-          logf ~level:`info "@.  Found a possible inequation...DELETEME@.";
+          logf ~level:`trace "  Found a possible inequation...DELETEME@.";
           (*
           let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
           let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
@@ -473,12 +473,12 @@ let mk_height_based_summary
           (* We've identified a recurrence; now we'll put together the data 
             structures we'll need to solve it.  *)
           logf ~level:`info "  [REC] %a@." (Srk.Syntax.Term.pp Cra.srk) term;  
-          logf ~level:`info "    before filter: %a @." Linear.QQVector.pp vec;
-          logf ~level:`info "     after filter: %a @." Linear.QQVector.pp new_vec;
+          logf ~level:`trace "    before filter: %a @." Linear.QQVector.pp vec;
+          logf ~level:`trace "     after filter: %a @." Linear.QQVector.pp new_vec;
           let one_over_outer_coeff = QQ.inverse outer_coeff in 
           let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
           let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
-          logf ~level:`info "      inner_coeff: %a @." QQ.pp inner_coeff;  
+          logf ~level:`trace "      inner_coeff: %a @." QQ.pp inner_coeff;  
 
           recurrence_candidates := {outer_sym=target_outer_sym;
                                     inner_sym=target_inner_sym;
@@ -495,9 +495,9 @@ let mk_height_based_summary
       List.iter process_constraint (Wedge.polyhedron sub_wedge) 
       end 
       in
-    logf ~level:`info "[Chora] Recurrence extraction:@.";
+    logf ~level:`trace "[Chora] Recurrence extraction:@.";
     List.iter extract_recurrence_for_symbol bounds.bound_pairs;
-    logf ~level:`info "        Finished recurrence extraction.@.";
+    logf ~level:`trace "        Finished recurrence extraction. DELETEME@.";
     (* *)
     (* 
     (* Scan for the lowest self-coefficent that each B_out has*)
@@ -520,7 +520,7 @@ let mk_height_based_summary
     (*        AND in the future maybe prioritize recurrences    *)
     (*   Don't extract more than one recurrence for each symbol *)
     let rec filter_candidates () =
-      logf ~level:`info "  Filtering recurrence candidates @.";
+      logf ~level:`trace "  Filtering recurrence candidates DELETEME @.";
       begin
         let nb_recurs = List.length !recurrence_candidates in 
         let earlier_candidates = ref Srk.Syntax.Symbol.Set.empty in 
@@ -603,7 +603,7 @@ let mk_height_based_summary
       else 
         (* The list of all candidates forms a recurrence block *)
         foreach_block_build recurrences !recurrence_candidates in
-    logf ~level:`info "  [ -- end of stratum -- ]@.";
+    logf ~level:`trace "  [ -- end of stratum -- ]@.";
     (* Did we get new recurrences? If so, then look for a higher stratum. *)
     if count_recurrences recurrences > nb_previous_recurrences then 
       extract_recurrences recurrences false
@@ -612,7 +612,8 @@ let mk_height_based_summary
     else recurrences 
     end 
     in 
-  let recurrences = extract_recurrences empty_recurrence_collection false in 
+  let recurrences = empty_recurrence_collection () in 
+  let recurrences = extract_recurrences recurrences false in 
   (* *)
   (*let term_of_id = Array.of_list (List.rev recurrences.rev_term_of_id) in *)
   let term_of_id = BatDynArray.to_array recurrences.term_of_id in 
@@ -620,9 +621,30 @@ let mk_height_based_summary
   let nb_constants = (* just inserting a test print *)
           0 (*(logf ~level:`info "      got here@."; 0)*)
   in
+  (* Sanity check sizes... *)
+  (if not ((List.length recurrences.blk_transforms) ==
+           (List.length recurrences.blk_adds)) then
+     failwith "Matrix recurrence transform/add blocks mismatched.");
+  let print_expr i term = 
+      logf ~level:`trace "  term_of_id[%d]=%a @." i (Srk.Syntax.Expr.pp Cra.srk) term in
+  Array.iteri print_expr term_of_id;
+  let adds_size = List.fold_left (fun t arr -> t + Array.length arr) 0 recurrences.blk_adds in
+  (if not (adds_size == (Array.length term_of_id)) then
+     (Format.printf "Size of term_of_id is %d@." (Array.length term_of_id);
+     Format.printf "Size of blk_transforms is %d@." (Array.length term_of_id);
+     failwith "Matrix recurrence and term_of_id are of mismatched size."));
+  let check_block_sizes trb ab = 
+    let goodsize = (Array.length trb) in
+    if not (goodsize == (Array.length ab)) then
+        failwith "Matrix recurrence transform/add blocks are unequal size."
+    else ()
+    in
+  List.iter2 check_block_sizes recurrences.blk_transforms recurrences.blk_adds;
+  (* *)
   (* Change to pairs of transform_add blocks *)
   (* Add the appropriate constraint to the loop counter, so K >= 0 *)
   (* Send the matrix recurrence to OCRS and obtain a solution *)
+  logf ~level:`trace "@.    Sending to OCRS [DELETEME]@.";
   let solution = SolvablePolynomial.exp_ocrs_external 
                   Cra.srk recurrences.ineq_tr loop_counter term_of_id 
                   nb_constants recurrences.blk_transforms 
