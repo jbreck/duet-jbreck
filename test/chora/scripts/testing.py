@@ -168,9 +168,26 @@ c4b["style"] = "assert"
 icrabatch = dict(bbatch)
 icrabatch["ID"] = "icra"
 icrabatch["root"] = "/u/j/b/jbreck/research/2013/ICRA/icra/WALi-OpenNWA/Examples/cprover/tests/"
+# Small, for quick testing:
 #icrabatch["files"] = (glob.glob(icrabatch["root"] + "c4b/*.c")[:4] + 
 #                      glob.glob(icrabatch["root"] + "sv-benchmarks/loops/*.c")[-4:])
-icrabatch["files"] = [F for F in [os.path.join(R,F) for R,D,Fs in os.walk(icrabatch["root"]) for F in Fs] if F.endswith(".c")]
+# Too big:
+#icrabatch["files"] = [F for F in [os.path.join(R,F) for R,D,Fs in os.walk(icrabatch["root"]) for F in Fs] if F.endswith(".c")]
+icra_dirs = ["c4b", "misc-recursive", "duet", "", "STAC/polynomial/assert", 
+"snlee/snlee_tests", "STAC/FiniteDifferencing", "STAC/LESE", "STAC/LowerBound", 
+"STAC/LZ", "sv-benchmarks/loop-acceleration", "sv-benchmarks/loop-invgen", 
+"sv-benchmarks/loop-lit", "sv-benchmarks/loop-new", "sv-benchmarks/loops", 
+"sv-benchmarks/recursive", "sv-benchmarks/recursive-simple", 
+"rec-sv-benchmarks/rec-loop-lit", "rec-sv-benchmarks/rec-loop-new", 
+"recurrences", "exponential", "frankenstein/HOLA", "frankenstein/relational", 
+"misc2017", "max_equals", "branching_loops", "strings_numeric", "ethereum"]
+# maybe make this a lambda?
+icrabatch["files"] = []
+try :
+    icrabatch["files"] = [os.path.join(D,F) for D,Fs in 
+           [(D, os.listdir(os.path.join(icrabatch["root"],D))) for D in icra_dirs]
+        for F in Fs if F.endswith(".c")] 
+except : pass
 icrabatch["style"] = "assert"
 
 batch_dicts = [rbabatch, abatch, c4b, icrabatch]
@@ -185,7 +202,7 @@ def reformat_float_string(s,form) :
 
 def format_conclusion(conclusion, is_safe) :
     if (conclusion == "ERROR") :
-        return '<font color=\"#600060\">ERROR</font><br>'
+        return '<b><font color=\"#600060\">ERROR</font></b><br>'
     if (conclusion == "TIMEOUT") :
         return '<font color=\"#800080\">TIMEOUT</font><br>'
     if (conclusion == "MEMOUT") :
@@ -444,7 +461,7 @@ def format_run(outrun, style) :
                     tools.append(Tool({"ID":toolID}))
 
             table = HTMLTable()
-            table.prefix = """<colgroup> <col span="1" style="width:400px;"> </colgroup>\n"""
+            table.prefix = """<colgroup> <col span="1" style="width:600px;"> </colgroup>\n"""
 
             if style == "rba" :
                 # register rows and columns
