@@ -920,14 +920,14 @@ let analyze_chora file =
           match Wedge.is_sat Ctx.context path_condition with
           | `Sat -> 
             Report.log_error loc msg;
-            Format.printf "Assertion on line %d FAILED: %s\n" loc.Cil.line msg
+            Format.printf "Assertion on line %d FAILED: \"%s\"\n" loc.Cil.line msg
           | `Unsat -> 
             Report.log_safe ();
-            Format.printf "Assertion on line %d PASSED: %s\n" loc.Cil.line msg
+            Format.printf "Assertion on line %d PASSED: \"%s\"\n" loc.Cil.line msg
           | `Unknown ->
             logf ~level:`warn "Z3 inconclusive";
             Report.log_error loc msg;
-            Format.printf "Assertion on line %d FAILED/INCONCLUSIVE: %s\n" loc.Cil.line msg
+            Format.printf "Assertion on line %d FAILED/INCONCLUSIVE: \"%s\"\n" loc.Cil.line msg
             );
       Format.printf "=================================\n";
     end
