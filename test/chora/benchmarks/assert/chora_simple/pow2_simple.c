@@ -7,7 +7,7 @@ int __cost;
 void doubler(int n) {
    if (n == 1) {__cost++; return;}
    doubler(n-1);
-   doubler(n-2);
+   doubler(n-1);
 }
 
 void main(int n) {
