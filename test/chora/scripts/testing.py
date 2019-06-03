@@ -499,6 +499,7 @@ def run(batch, stamp) :
                 startTime = time.time()
                 exitType = "unknown"
                 sys.stdout.write("["+tool.ID+":")
+                sys.stdout.flush()
                 timeTaken = -1.0
                 with open(logfilename,"w") as logfile :
                     print >>logfile, " ".join(cmd)
