@@ -1,5 +1,6 @@
 #!/usr/bin/python
-import os.path, sys, glob, datetime, time, subprocess, shutil, re, xml.sax.saxutils, csv
+import os.path, sys, glob, datetime, time, subprocess, shutil, re
+import xml.sax.saxutils, csv, tempfile
 
 def usage() :
     print "USAGE: testing.py --run <batchname>"
@@ -20,14 +21,14 @@ benchroot = os.path.join(testroot,"benchmarks/")
 # Note to self: output parsing needs to be attached to specific tools
 
 def chora_assert_results(params) :
-    if "path" not in params : 
-        print "ERROR: chora_bounds_callout was called without a path"
+    if "logpath" not in params : 
+        print "ERROR: chora_assert_results was called without a path"
         sys.exit(0)
     #e.g., "Assertion on line 13 FAILED"
     results = list()
     kind_dict = {"PASSED":"PASS","FAILED":"FAIL"}
     regex = "Assertion on line ([-0-9]+) ([A-Za-z]+)"
-    with open(params["path"],"rb") as logfile :
+    with open(params["logpath"],"rb") as logfile :
         for line in logfile :
             matches = re.match(regex, line)
             if matches :
@@ -40,11 +41,11 @@ def chora_assert_results(params) :
     return results
 
 def chora_bounds_callout(params) :
-    if "path" not in params : 
+    if "logpath" not in params : 
         print "ERROR: chora_bounds_callout was called without a path"
         sys.exit(0)
     output = ""
-    with open(params["path"],"rb") as logfile :
+    with open(params["logpath"],"rb") as logfile :
         mode = 0
         for line in logfile :
             if mode == 0 : 
@@ -71,6 +72,117 @@ chora["cmd"] = [parent(2,testroot) + "/duet.native","-chora","{filename}"]
 chora["bounds_callout"] = chora_bounds_callout
 chora["assert_results"] = chora_assert_results
 
+
+def icra_assert_results(params) :
+    if "logpath" not in params : 
+        print "ERROR: icra_assert_results was called without a path"
+        sys.exit(0)
+    #e.g., "Assertion on line 13 FAILED"
+    results = list()
+    kind_dict = {"PASSED":"PASS","FAILED":"FAIL"}
+    regex = "Assertion on line ([-0-9]+) ([A-Za-z]+)"
+    with open(params["logpath"],"rb") as logfile :
+        for line in logfile :
+            matches = re.search(regex, line)
+            if matches :
+                for kind in kind_dict :
+                    if kind in matches.group(2) :
+                        results.append( (kind_dict[kind], int(matches.group(1))) )
+                        break
+                else :
+                    results.append( ("UNRECOGNIZED", int(matches.group(1))) )
+    return results
+
+def icra_bounds_callout(params) :
+    if "logpath" not in params : 
+        print "ERROR: icra_bounds_callout was called without a path"
+        sys.exit(0)
+    output = ""
+    with open(params["logpath"],"rb") as logfile :
+        mode = 0
+        for line in logfile :
+            if mode == 0 : 
+                if line.startswith("Bounds on Variables"):
+                    output += line
+                    mode = 1
+                    continue
+            if mode == 1 : # skip a line
+                mode = 2 
+                continue
+            if mode == 2 :
+                if line.startswith("==========="):
+                    mode = 0
+                    continue
+                output += line
+    return output
+
+# really should have a tool root
+icra = dict() 
+icra["ID"] = "icra"
+icra["displayname"] = "ICRA"
+icra["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/icra","{filename}"]
+icra["bounds_callout"] = icra_bounds_callout
+icra["assert_results"] = icra_assert_results
+
+
+def duet_assert_results(params) :
+    if "logpath" not in params : 
+        print "ERROR: duet_assert_results was called without a path"
+        sys.exit(0)
+    if "tmpfile" not in params : 
+        print "ERROR: duet_assert_results was called without a tmpfile"
+        sys.exit(0)
+    results = list()
+    regex = "(PASS|FAIL)"
+    with open(params["tmpfile"],"rb") as tmpfile :
+        for line in tmpfile :
+            for result in re.findall(regex, line) :
+                results.append( (result, 0) )
+                break
+    return results
+
+def duet_bounds_callout(params) :
+    if "logpath" not in params : 
+        print "ERROR: duet_bounds_callout was called without a path"
+        sys.exit(0)
+    output = ""
+    with open(params["logpath"],"rb") as logfile :
+        mode = 0
+        for line in logfile :
+            if mode == 0 : 
+                if line.startswith("Procedure:"):
+                    output += line
+                    mode = 2 
+                    continue
+            if mode == 2 :
+                #if line.startswith("==========="):
+                #    mode = 0
+                #    continue
+                output += line
+    return output
+
+# really should have a tool root
+duetcra = dict() 
+duetcra["ID"] = "duetcra"
+duetcra["displayname"] = "CRA"
+duetcra["shortname"] = "cra"
+duetcra["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/duet/duet.native",
+                  "-cra","{filename}","-test","{tmpfile}"]
+duetcra["bounds_callout"] = duet_bounds_callout
+duetcra["assert_results"] = duet_assert_results
+duetcra["no_assert_line_numbers"] = True
+
+duetrba = dict() 
+duetrba["ID"] = "duetrba"
+duetrba["displayname"] = "CRA:rba"
+duetrba["shortname"] = "cra"
+duetrba["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/duet/duet.native",
+                  "-rba","{filename}","-test","{tmpfile}"]
+duetrba["bounds_callout"] = duet_bounds_callout
+duetrba["assert_results"] = duet_assert_results
+duetcra["no_assert_line_numbers"] = True
+
+
 def defaulting_field(d,*fields) :
     if len(fields) == 0 :
         print "TEST SCRIPT ERROR: missing field in tool description: " + str(d)
@@ -96,6 +208,7 @@ class Tool :
         tool_IDs.add(self.ID)
         self.cmd = d["cmd"]
         self.displayname = defaulting_field(d,"displayname","ID")
+        self.shortname = defaulting_field(d,"shortname","ID")
     def has(self, attr) : return attr in self.d
     def get(self, attr) : return self.d[attr]
     def hastrue(self, attr) :
@@ -132,7 +245,8 @@ class Datfile :
         if key not in self.data[source][tool] : return default
         return self.data[source][tool][key]
 
-tool_dicts = [chora]
+#tool_dicts = [chora, icra, duetcra, duetrba]
+tool_dicts = [duetcra, duetrba, icra, chora]
 
 alltools = {D["ID"]:Tool(D) for D in tool_dicts}
 
@@ -145,25 +259,34 @@ def detect_safe_benchmark(path) :
 
 bbatch = dict()
 bbatch["timeout"] = 300
-bbatch["toolIDs"] = sorted(alltools.keys())
+#bbatch["toolIDs"] = sorted(alltools.keys())
+bbatch["toolIDs"] = ["chora"]
 bbatch["root"] = benchroot
 
 rbabatch = dict(bbatch)
 rbabatch["ID"] = "rba"
 rbabatch["files"] = glob.glob(benchroot + "rba/*.c")
-rbabatch["style"] = "rba"
+rbabatch["format_style"] = "rba"
 rbabatch["warmupfiles"] = ["rba/cost_fib.c","rba/cost_fib_eq.c"]
 
 abatch = dict(bbatch)
 abatch["ID"] = "assert"
 abatch["files"] = glob.glob(benchroot + "assert/chora_simple/*.c")
-abatch["style"] = "assert"
+abatch["format_style"] = "assert"
+
+allassert = dict(abatch)
+allassert["ID"] = "allassert"
+allassert["toolIDs"] = ["duetcra", "icra", "chora"]
+
+#allrba["toolIDs"] = ["chora", "icra", "duetrba"]
+
+#maybe say which is which?
 
 c4b = dict(bbatch)
 c4b["ID"] = "c4b"
 c4b["root"] = "/u/j/b/jbreck/research/2013/ICRA/icra/WALi-OpenNWA/Examples/cprover/tests/"
 c4b["files"] = glob.glob(c4b["root"] + "c4b/*.c")
-c4b["style"] = "assert"
+c4b["format_style"] = "assert"
 
 icrabatch = dict(bbatch)
 icrabatch["ID"] = "icra"
@@ -188,9 +311,10 @@ try :
            [(D, os.listdir(os.path.join(icrabatch["root"],D))) for D in icra_dirs]
         for F in Fs if F.endswith(".c")] 
 except : pass
-icrabatch["style"] = "assert"
+icrabatch["format_style"] = "assert"
+icrabatch["toolIDs"] = ["duetcra","icra","chora"]
 
-batch_dicts = [rbabatch, abatch, c4b, icrabatch]
+batch_dicts = [rbabatch, abatch, c4b, icrabatch, allassert]
 
 allbatches = {D["ID"]:D for D in batch_dicts}
 
@@ -229,7 +353,10 @@ def aggregate_assert_results(assert_str, exitType, is_safe, style) :
     #   maybe add "unknown" later?
     # should do this all through pluggable formatter
     out = dict()
-    assert_parts = assert_str[1:-1].split(";")
+    if len(assert_str) >= 2 :
+        assert_parts = assert_str[1:-1].split(";")
+    else :
+        assert_parts = [""]
     out["safe_good"] = 0
     out["unsafe_good"] = 0
     if exitType == "timeout" :
@@ -317,6 +444,8 @@ class HTMLTable :
         output += "</table>\n"
         return output
 
+def sort_dir_major(f) : return ( os.path.dirname(f), os.path.basename(f) )
+
 def run(batch, stamp) :
     tools = [alltools[I] for I in batch["toolIDs"]]
     print "RUN ID=" + stamp
@@ -325,6 +454,15 @@ def run(batch, stamp) :
     runlogpath = outrun + "/run.dat"
     outsources = outrun + "/sources/"
     makedirs(outsources)
+    formatting = []
+    formatting.append("format_toolIDs="+",".join(batch["toolIDs"]))
+    for key in batch :
+        if key.startswith("format_") :
+            formatting.append(key+"="+batch[key])
+    formattingpath = outrun + "/formatdata.txt"
+    with open(formattingpath, "wb") as formatfile :
+        for line in formatting :
+            print >>formatfile, line
     if not "root" in batch:
         print "ERROR: batch['root'] was not specified"
         return
@@ -344,7 +482,7 @@ def run(batch, stamp) :
                     subprocess.call(cmd, stdout=devnull, stderr=devnull)
     print ""
     with open(runlogpath,"wb") as runlog :
-        for filename in sorted(batch["files"]) :
+        for filename in sorted(batch["files"], key=sort_dir_major) :
             nicename = filename
             br_prefix = yes_post_slash(batch["root"])
             if nicename.startswith(br_prefix) : nicename = nicename[len(br_prefix):]
@@ -353,7 +491,9 @@ def run(batch, stamp) :
             makedirs(os.path.dirname(sourcedest))
             shutil.copyfile(filename, sourcedest)
             for tool in tools : 
-                cmd = [S.format(filename=filename) for S in tool.cmd]
+                handle, tmpfile = tempfile.mkstemp(suffix="choratmpfile.txt")
+                os.close(handle)
+                cmd = [S.format(filename=filename, tmpfile = tmpfile) for S in tool.cmd]
                 logfilename = outrun + "/logs/" + nicename + "." + tool.ID + ".log"
                 makedirs(os.path.dirname(logfilename))
                 startTime = time.time()
@@ -392,38 +532,52 @@ def run(batch, stamp) :
                 #trialNo = 0
                 #runlogline += "trial="+trialNo+"\t" # maybe?
                 if tool.has("assert_results") :
-                    results = tool.get("assert_results")({"path":logfilename})
-                    results = sorted(results,key=lambda R:R[1])
-                    result_str = ";".join(R[0]+"@"+str(R[1]) for R in results)
+                    results = tool.get("assert_results")({"logpath":logfilename,"tmpfile":tmpfile})
+                    if tool.has("no_assert_line_numbers") : 
+                        result_str = ";".join(R[0]+"@?" for R in results)
+                    else : 
+                        results = sorted(results,key=lambda R:R[1])
+                        result_str = ";".join(R[0]+"@"+str(R[1]) for R in results)
                     runlogline += "assert=["+result_str+"]\t"
                 runlogline += "runid="+stamp+"\t"
                 while len(runlogline) > 0 and runlogline[-1]=="\t" : runlogline = runlogline[:-1]
                 print >>runlog, runlogline
+                os.remove(tmpfile)
             print "" 
 
     newstamp = datetime.datetime.now().strftime("%Y/%m/%d at %H:%M:%S")
     print ""
     print "Run ID=" + stamp + " completed at " + newstamp
 
-    format_run(outrun, batch["style"])
+    format_run(outrun)
 
 created_html_files = list()
 
-def format_run(outrun, style) :
+def format_run(outrun) :
     if not os.path.isdir(outrun) : 
         outrun = testroot + "/output/" + outrun
     if not os.path.isdir(outrun) : 
         print "Wasn't a directory: " + outrun
         usage()
-    if style == "rba" :
+    formatting = dict()
+    formattingpath = outrun + "/formatdata.txt"
+    with open(formattingpath, "rb") as formatfile :
+        for line in formatfile :
+            if "=" not in line : continue
+            line = line.rstrip()
+            parts = line.split("=",1)
+            fk = "format_"
+            if parts[0].startswith(fk) : parts[0]=parts[0][len(fk):]
+            formatting[parts[0]]=parts[1]
+    if formatting["style"] == "rba" :
         htmlpath = outrun+"/rba.html"
         created_html_files.append(htmlpath)
-    elif style == "assert" :
+    elif formatting["style"] == "assert" :
         htmlpath = outrun+"/assert.html"
         created_html_files.append(htmlpath)
     else :
-        print "Unrecognized formatting style requested: " + style
-    if style in ["rba","assert"] :
+        print "Unrecognized formatting style requested: " + formatting["style"]
+    if formatting["style"] in ["rba","assert"] :
         with open(htmlpath,"wb") as html :
             print >>html, "<html><body>"
 
@@ -439,20 +593,21 @@ def format_run(outrun, style) :
                     nicepath = path[len(sourceroot):]
                     localsourcefiles.append(nicepath)
                 sourcefiles.extend(localsourcefiles)
-            sourcefiles = sorted(sourcefiles)
+            sourcefiles = sorted(sourcefiles, key=sort_dir_major)
 
-            logtoolIDs = list()
             logroot = outrun+"/logs/"
-            toolre = re.compile(".*[.](.*)[.]log$")
-            for curdir, dirs, files in os.walk(logroot):
-                for filename in files :
-                    if not filename.endswith(".log") : continue
-                    matches = toolre.match(filename)
-                    if matches :
-                        logtoolIDs.append(matches.group(1))
-            logtoolIDs = sorted(set(logtoolIDs))
+            #logtoolIDs = list()
+            #toolre = re.compile(".*[.](.*)[.]log$")
+            #for curdir, dirs, files in os.walk(logroot):
+            #    for filename in files :
+            #        if not filename.endswith(".log") : continue
+            #        matches = toolre.match(filename)
+            #        if matches :
+            #            logtoolIDs.append(matches.group(1))
+            #logtoolIDs = sorted(set(logtoolIDs))
+            format_toolIDs = formatting["toolIDs"].split(",")
             tools = list()
-            for toolID in logtoolIDs :
+            for toolID in format_toolIDs :
                 if toolID in alltools :
                     tools.append(alltools[toolID])
                 else :
@@ -463,7 +618,7 @@ def format_run(outrun, style) :
             table = HTMLTable()
             table.prefix = """<colgroup> <col span="1" style="width:600px;"> </colgroup>\n"""
 
-            if style == "rba" :
+            if formatting["style"] == "rba" :
                 # register rows and columns
                 table.register_row("head")
                 for sourcefile in sourcefiles : table.register_row("src/"+sourcefile)
@@ -494,7 +649,7 @@ def format_run(outrun, style) :
                             bc_result = ("<pre>"
                                         +xml.sax.saxutils.escape(
                                           tool.get("bounds_callout")
-                                                  ({"path":logpath}))
+                                                  ({"logpath":logpath}))
                                         +"</pre>")
                         else :
                             bc_result = 'No "bounds_callout" for this tool'
@@ -504,7 +659,7 @@ def format_run(outrun, style) :
                     table.set(sourcefilekey,"logs"," ".join(loglinks))
                 print >>html, table.show()
                 print >>html, "</body></html>"
-            if style == "assert" :
+            if formatting["style"] == "assert" :
                 # register rows and columns
                 table.register_row("head")
                 for sourcefile in sourcefiles : table.register_row("src/"+sourcefile)
@@ -539,7 +694,7 @@ def format_run(outrun, style) :
                         table.set(sourcefilekey, "toolassert/"+tool.ID, assert_out["html"])
 
                         if not os.path.exists(logpath) : continue
-                        loglinks.append("<a href='logs/" + logrel + "'>[" + tool.ID + "]</a>")
+                        loglinks.append("<a href='logs/" + logrel + "'>[" + tool.shortname + "]</a>")
                     table.set(sourcefilekey,"logs"," ".join(loglinks))
                 print >>html, table.show()
                 print >>html, "</body></html>"
@@ -573,11 +728,9 @@ if __name__ == "__main__" :
             sys.exit(0)
         run(allbatches[batchid],stamp)
     elif sys.argv[1] == "--format" :
-        if len(sys.argv) < 3 : usage()
+        if len(sys.argv) < 2 : usage()
         outrun = sys.argv[2]
-        style = "rba" # someday, style="default"
-        if "style=rba" in sys.argv : style = "rba"
-        format_run(outrun, style)
+        format_run(outrun)
     else: usage()
     if "--openhtml" in sys.argv :
         for path in created_html_files :
