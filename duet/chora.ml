@@ -914,9 +914,9 @@ let analyze_chora file =
             Ctx.mk_and [K.guard path; Ctx.mk_not phi]
             |> SrkSimplify.simplify_terms Cra.srk
           in
-          logf "Path condition:@\n%a"
+          logf ~level:`trace "Path condition:@\n%a"
             (Syntax.pp_smtlib2 Ctx.context) path_condition;
-          (*dump_goal loc path_condition;*)
+          Cra.dump_goal loc path_condition;
           match Wedge.is_sat Ctx.context path_condition with
           | `Sat -> 
             Report.log_error loc msg;
