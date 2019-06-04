@@ -262,6 +262,7 @@ bbatch["timeout"] = 300
 #bbatch["toolIDs"] = sorted(alltools.keys())
 bbatch["toolIDs"] = ["chora"]
 bbatch["root"] = benchroot
+bbatch["format_alternate_bgcolor"] = True
 
 rbabatch = dict(bbatch)
 rbabatch["ID"] = "rba"
@@ -331,8 +332,8 @@ def format_conclusion(conclusion, is_safe) :
         return '<font color=\"#800080\">TIMEOUT</font><br>'
     if (conclusion == "MEMOUT") :
         return '<font color=\"#900020\">MEMOUT</font><br>'
-    if (conclusion == "NO_ASSERTS") :
-        return '<font color=\"#000000\">NO_ASSERTS</font><br>'
+    if (conclusion == "N/A") :
+        return '<font color=\"#000000\">N/A</font><br>'
     if is_safe == "safe" :
         if (conclusion == "PASS"):
             return '<font color=\"#00AA00\">PASS</font>'
@@ -367,7 +368,7 @@ def aggregate_assert_results(assert_str, exitType, is_safe, style) :
         out["conclusion"] = "ERROR"
     elif exitType == "default" :
         if len(assert_parts) == 0 or assert_parts == [""] :
-            out["conclusion"] = "NO_ASSERTS"
+            out["conclusion"] = "N/A"
         elif is_safe == "safe" :
             if all(P.startswith("PASS") for P in assert_parts) :
                 out["conclusion"] = "PASS"
@@ -398,6 +399,9 @@ def aggregate_assert_results(assert_str, exitType, is_safe, style) :
         else :
             out["html"] = conclusion_html
     return out
+
+def check_flag(flag, formatting) :
+    return flag in formatting and bool(formatting[flag]) == True
 
 class HTMLTable :
     def __init__(self) :
@@ -431,13 +435,18 @@ class HTMLTable :
         if rowid not in self.data : self.data[rowid] = dict()
         if colid not in self.data[rowid] : self.data[rowid][colid] = ""
         return self.data[rowid][colid]
-    def show(self) :
+    def show(self, formatting) :
         output = "<table " + self.style + " >\n"
         output += self.prefix
         rows = self.rows
         columns = self.columns
+        bgIndex = 0
         for row in rows :
-            output += "<tr>"
+            styling = ""
+            if check_flag("alternate_bgcolor",formatting) : 
+                styling = 'style="background-color:'+["white","#CCCCCC"][bgIndex]+';"'
+                bgIndex = 1 - bgIndex
+            output += "<tr "+styling+">"
             for col in columns :
                 output += "<td>" + self.get(row,col) + "</td>"
             output += "</tr>\n"
@@ -658,7 +667,7 @@ def format_run(outrun) :
                                   "toolrba/"+tool.ID,
                                   bc_result)
                     table.set(sourcefilekey,"logs"," ".join(loglinks))
-                print >>html, table.show()
+                print >>html, table.show(formatting)
                 print >>html, "</body></html>"
             if formatting["style"] == "assert" :
                 # register rows and columns
@@ -697,7 +706,7 @@ def format_run(outrun) :
                         if not os.path.exists(logpath) : continue
                         loglinks.append("<a href='logs/" + logrel + "'>[" + tool.shortname + "]</a>")
                     table.set(sourcefilekey,"logs"," ".join(loglinks))
-                print >>html, table.show()
+                print >>html, table.show(formatting)
                 print >>html, "</body></html>"
 
 def list_known_batch_names() :
