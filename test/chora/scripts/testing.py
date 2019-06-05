@@ -20,6 +20,45 @@ benchroot = os.path.join(testroot,"benchmarks/")
 
 # Note to self: output parsing needs to be attached to specific tools
 
+class StringRing :
+    def __init__(self, length) :
+        self.length = length
+        self.ring = list() 
+        for i in range(self.length) : self.ring.append("")
+        self.cursor = 0
+    def advance(self) :
+        self.cursor = (self.cursor + 1) % self.length
+    def add(self, line) :
+        self.ring[self.cursor] = line
+        self.advance()
+    def readout(self) :
+        output = ""
+        self.advance()
+        for i in range(self.length) :
+            line = self.ring[self.cursor]
+            if line != "" : 
+                if output != "" : output += "\n"
+                output += line
+            self.advance()
+        return output
+
+def generic_error_callout(params) :
+    if "logpath" not in params : 
+        print "ERROR: generic_error_callout was called without a path"
+        sys.exit(0)
+    ring = StringRing(5)
+    # It probably isn't safe to say "error" here; that word is used
+    #   too often in non-exceptional cases.
+    errorRegex = re.compile("failure|fatal|exception",re.IGNORECASE)
+    with open(params["logpath"],"rb") as logfile :
+        mode = 0
+        for line in logfile :
+            if len(line.strip()) == 0 : continue
+            if errorRegex.search(line) :
+                ring.add(line.rstrip())
+    return ring.readout()
+
+
 def chora_assert_results(params) :
     if "logpath" not in params : 
         print "ERROR: chora_assert_results was called without a path"
@@ -71,6 +110,7 @@ chora["displayname"] = "CHORA"
 chora["cmd"] = [parent(2,testroot) + "/duet.native","-chora","{filename}"]
 chora["bounds_callout"] = chora_bounds_callout
 chora["assert_results"] = chora_assert_results
+chora["error_callout"] = generic_error_callout
 
 
 def icra_assert_results(params) :
@@ -123,6 +163,7 @@ icra["displayname"] = "ICRA"
 icra["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/icra","{filename}"]
 icra["bounds_callout"] = icra_bounds_callout
 icra["assert_results"] = icra_assert_results
+icra["error_callout"] = generic_error_callout
 
 
 def duet_assert_results(params) :
@@ -171,6 +212,7 @@ duetcra["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/duet/duet.native",
 duetcra["bounds_callout"] = duet_bounds_callout
 duetcra["assert_results"] = duet_assert_results
 duetcra["no_assert_line_numbers"] = True
+duetcra["error_callout"] = generic_error_callout
 
 duetrba = dict() 
 duetrba["ID"] = "duetrba"
@@ -180,7 +222,8 @@ duetrba["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/duet/duet.native",
                   "-rba","{filename}","-test","{tmpfile}"]
 duetrba["bounds_callout"] = duet_bounds_callout
 duetrba["assert_results"] = duet_assert_results
-duetcra["no_assert_line_numbers"] = True
+duetrba["no_assert_line_numbers"] = True
+duetrba["error_callout"] = generic_error_callout
 
 
 def defaulting_field(d,*fields) :
@@ -192,6 +235,8 @@ def defaulting_field(d,*fields) :
 def yes_post_slash(d) :
     if d[-1] == "/" : return d
     return d + "/"
+
+def hastrue(d,attr) : return attr in d and d[attr] == True
 
 tool_IDs = set()
 class Tool :
@@ -209,7 +254,7 @@ class Tool :
         self.cmd = d["cmd"]
         self.displayname = defaulting_field(d,"displayname","ID")
         self.shortname = defaulting_field(d,"shortname","ID")
-    def has(self, attr) : return attr in self.d
+    def has(self, attr) : return (attr in self.d)
     def get(self, attr) : return self.d[attr]
     def hastrue(self, attr) :
         return self.has(attr) and (self.get(attr) == True)
@@ -309,17 +354,19 @@ icra_dirs = ["c4b", "misc-recursive", "duet", "", "STAC/polynomial/assert",
 icrabatch["files"] = []
 try :
     icrabatch["files"] = [os.path.join(icrabatch["root"],D,F) for D,Fs in 
-           [(D, os.listdir(os.path.join(icrabatch["root"],D))) for D in icra_dirs]
+           [(D, os.listdir(os.path.join(icrabatch["root"],D))) for D in icra_dirs] # DELETE ME
         for F in Fs if F.endswith(".c")] 
 except : pass
 icrabatch["format_style"] = "assert"
 icrabatch["toolIDs"] = ["duetcra","icra","chora"]
 
-icrabatch_chora_only = dict(icrabatch)
-icrabatch_chora_only["ID"] = "icrabatch_chora_only"
-icrabatch_chora_only["toolIDs"] = ["chora"]
+quickchora = dict(icrabatch)
+quickchora["ID"] = "quickchora"
+quickchora["toolIDs"] = ["chora"]
+quickchora["timeout"] = 30
+quickchora["instant_error_callouts"] = True
 
-batch_dicts = [rbabatch, abatch, c4b, icrabatch, allassert, icrabatch_chora_only]
+batch_dicts = [rbabatch, abatch, c4b, icrabatch, allassert, quickchora]
 
 allbatches = {D["ID"]:D for D in batch_dicts}
 
@@ -352,7 +399,7 @@ def format_conclusion(conclusion, is_safe) :
         return '<font color=\"#000000\">MIXED</font>'
     return '<font color=\"#FF00DF\">?'+conclusion+'?</font>'
 
-def aggregate_assert_results(assert_str, exitType, is_safe, style) :
+def aggregate_assert_results(assert_str, exitType, is_safe, style, error_str) :
     # assert_str looks something like "[PASS@11;FAIL@17;PASS@19]"
     # exitType is "default" or "timeout" or "error" or "memout"
     #   maybe add "unknown" later?
@@ -390,7 +437,7 @@ def aggregate_assert_results(assert_str, exitType, is_safe, style) :
     else :
         out["conclusion"] = "UNKNOWN"
     conclusion_html = ("<span title='"+ 
-                       "exitType="+exitType+",  asserts="+assert_str+"'>"+
+                       "exitType="+exitType+",  asserts="+assert_str+error_str+"'>"+
                        format_conclusion(out["conclusion"],is_safe)+
                        "</span>")
     if style == "short" :
@@ -507,14 +554,14 @@ def run(batch, stamp) :
                 handle, tmpfile = tempfile.mkstemp(suffix="choratmpfile.txt")
                 os.close(handle)
                 cmd = [S.format(filename=filename, tmpfile = tmpfile) for S in tool.cmd]
-                logfilename = outrun + "/logs/" + nicename + "." + tool.ID + ".log"
-                makedirs(os.path.dirname(logfilename))
+                logpath = outrun + "/logs/" + nicename + "." + tool.ID + ".log"
+                makedirs(os.path.dirname(logpath))
                 startTime = time.time()
                 exitType = "unknown"
                 sys.stdout.write("["+tool.ID+":")
                 sys.stdout.flush()
                 timeTaken = -1.0
-                with open(logfilename,"w") as logfile :
+                with open(logpath,"w") as logfile :
                     print >>logfile, " ".join(cmd)
                     print >>logfile, ""
                     logfile.flush()
@@ -546,7 +593,7 @@ def run(batch, stamp) :
                 #trialNo = 0
                 #runlogline += "trial="+trialNo+"\t" # maybe?
                 if tool.has("assert_results") :
-                    results = tool.get("assert_results")({"logpath":logfilename,"tmpfile":tmpfile})
+                    results = tool.get("assert_results")({"logpath":logpath,"tmpfile":tmpfile})
                     if tool.has("no_assert_line_numbers") : 
                         result_str = ";".join(R[0]+"@?" for R in results)
                     else : 
@@ -556,6 +603,15 @@ def run(batch, stamp) :
                 runlogline += "runid="+stamp+"\t"
                 while len(runlogline) > 0 and runlogline[-1]=="\t" : runlogline = runlogline[:-1]
                 print >>runlog, runlogline
+                if (exitType == "error" and tool.has("error_callout") 
+                    and hastrue(batch,"instant_error_callouts")) :
+                    error_raw = tool.get("error_callout")({"logpath":logpath})
+                    if len(error_raw.strip()) > 0 :
+                        sys.stdout.write("\n   Possible error-related text in logfile follows:\n")
+                        for line in error_raw.split("\n") :
+                            sys.stdout.write("     " + line.rstrip() + "\n")
+                        sys.stdout.write("  ")
+                        sys.stdout.flush()
                 os.remove(tmpfile)
             print "" 
 
@@ -702,8 +758,14 @@ def format_run(outrun) :
                         assert_str = datfile.get_default(sourcefile,tool.ID,"assert","")
                         exitType = datfile.get_default(sourcefile,tool.ID,"exit","")
                         is_safe = detect_safe_benchmark(sourcefile)
+                        error_str = ""
+                        if exitType == "error" and tool.has("error_callout"):
+                            error_raw = tool.get("error_callout")({"logpath":logpath})
+                            if len(error_raw.strip()) > 0 :
+                                error_str = ("\nPossible error-related text in logfile follows:\n"+
+                                             xml.sax.saxutils.escape(error_raw).replace("'","\""))
 
-                        assert_out = aggregate_assert_results(assert_str, exitType, is_safe, "short")
+                        assert_out = aggregate_assert_results(assert_str, exitType, is_safe, "short", error_str)
 
                         table.set(sourcefilekey, "toolassert/"+tool.ID, assert_out["html"])
 
