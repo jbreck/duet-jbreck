@@ -315,7 +315,11 @@ except : pass
 icrabatch["format_style"] = "assert"
 icrabatch["toolIDs"] = ["duetcra","icra","chora"]
 
-batch_dicts = [rbabatch, abatch, c4b, icrabatch, allassert]
+icrabatch_chora_only = dict(icrabatch)
+icrabatch_chora_only["ID"] = "icrabatch_chora_only"
+icrabatch_chora_only["toolIDs"] = ["chora"]
+
+batch_dicts = [rbabatch, abatch, c4b, icrabatch, allassert, icrabatch_chora_only]
 
 allbatches = {D["ID"]:D for D in batch_dicts}
 
@@ -467,7 +471,7 @@ def run(batch, stamp) :
     formatting.append("format_toolIDs="+",".join(batch["toolIDs"]))
     for key in batch :
         if key.startswith("format_") :
-            formatting.append(key+"="+batch[key])
+            formatting.append(key+"="+str(batch[key]))
     formattingpath = outrun + "/formatdata.txt"
     with open(formattingpath, "wb") as formatfile :
         for line in formatting :
