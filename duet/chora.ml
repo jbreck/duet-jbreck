@@ -228,12 +228,27 @@ type term_examination_result =
   | UseTermWithDependency of Srk.QQ.t * int * Srk.Syntax.symbol
 
 let build_sub_dim_to_rec_num_map recurrences sub_cs = 
-  Srk.Syntax.Symbol.Map.fold
+  (* Option 1: build from done_symbols *)
+  (*Srk.Syntax.Symbol.Map.fold
     (fun sym recurrence_number old_map -> 
       let sub_dim = (CoordinateSystem.cs_term_id sub_cs (`App (sym, []))) in 
       BatMap.Int.add sub_dim (recurrence_number) old_map)
     recurrences.done_symbols
-    BatMap.Int.empty 
+    BatMap.Int.empty*)
+  (* *)
+  (* Option 2: build from coordinate system *)
+  BatEnum.fold (fun oldmap sub_dim ->
+      match CoordinateSystem.destruct_coordinate sub_cs sub_dim with
+      | `App (sym,_) -> 
+        if Srk.Syntax.Symbol.Map.mem sym recurrences.done_symbols then
+          let recurrence_number = 
+            Srk.Syntax.Symbol.Map.find sym recurrences.done_symbols in
+          BatMap.Int.add sub_dim recurrence_number oldmap
+        else oldmap
+      | _ -> oldmap)
+    BatMap.Int.empty
+    (0 -- (CoordinateSystem.dim sub_cs - 1))
+
 
 let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym 
                      new_coeffs_and_dims blk_transform sub_dim_to_rec_num = 
@@ -384,6 +399,9 @@ let mk_height_based_summary
       if not (Srk.Syntax.Symbol.Map.mem target_inner_sym wedge_map) then () else 
       let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym !b_in_b_out_map in
       let sub_wedge = Srk.Syntax.Symbol.Map.find target_inner_sym wedge_map in 
+      (* TODO: I should start from the coordinate system, and map its dimensions to the symbols
+       *         that I'm interested, rather than going in this direction, starting from the 
+       *         symbols that I know about.  *)
       let sub_cs = Wedge.coordinate_system sub_wedge in
       if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_inner_sym)) then () else
       if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym)) then () else
@@ -644,7 +662,7 @@ let mk_height_based_summary
   (* Change to pairs of transform_add blocks *)
   (* Add the appropriate constraint to the loop counter, so K >= 0 *)
   (* Send the matrix recurrence to OCRS and obtain a solution *)
-  logf ~level:`trace "@.    Sending to OCRS [DELETEME]";
+  logf ~level:`trace "@.    Sending to OCRS ";
   let solution = SolvablePolynomial.exp_ocrs_external 
                   Cra.srk recurrences.ineq_tr loop_counter term_of_id 
                   nb_constants recurrences.blk_transforms 
