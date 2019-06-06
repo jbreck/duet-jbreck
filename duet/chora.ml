@@ -32,9 +32,11 @@ module BURG = WeightedGraph.MakeBottomUpRecGraph(struct
   let project = project
 end)
 
+let chora_print_summaries = ref false
+
 (* ugly: copied from newtonDomain just for debugging *)
-let print_indented indent k =
-      logf ~level:`info "%s"
+let print_indented ?(level=`info) indent k =
+      logf ~level:level "%s"
       (SrkUtil.mk_show (fun formatter tr ->
           Format.pp_open_vbox formatter indent;
           Format.pp_print_break formatter 0 0;
@@ -841,6 +843,18 @@ let analyze_chora file =
       [one_summary] in 
     (* *) 
     let query = BURG.mk_query ts summarizer in
+    (* *)
+    let get_procedure_summary procedure = 
+        let entry = (RG.block_entry rg procedure).did in
+        let exit = (RG.block_exit rg procedure).did in
+        BURG.path_weight query entry exit in
+    let print_procedure_summary procedure summary level = 
+        logf ~level:level "---------------------------------";
+        logf ~level:level "@. -- Procedure summary for %a = " Varinfo.pp procedure;
+        print_indented ~level:level 0 summary;
+        logf ~level:level "@."
+        (*debug_print_wedge_of_transition summary;*)
+        in
     (* Resource-bound analysis *)
     begin
       let cost_opt =
@@ -852,7 +866,12 @@ let analyze_chora file =
         with Not_found -> None
       in
       match cost_opt with 
-      | None -> (logf ~level:`info "Could not find __cost variable")
+      | None -> 
+        (logf ~level:`info "Could not find __cost variable";
+        if !chora_print_summaries then
+            RG.blocks rg |> BatEnum.iter (fun procedure ->
+            let summary = get_procedure_summary procedure in 
+            print_procedure_summary procedure summary `always))
       | Some cost ->
         (let cost_symbol = Cra.V.symbol_of cost in
         let exists x =
@@ -862,15 +881,9 @@ let analyze_chora file =
         in
         Format.printf "===== Resource-Usage Bounds =====\n";
         RG.blocks rg |> BatEnum.iter (fun procedure ->
-            (*Format.printf "\n";*)
-            let entry = (RG.block_entry rg procedure).did in
-            let exit = (RG.block_exit rg procedure).did in
-            let summary = BURG.path_weight query entry exit in
-            logf ~level:`info "---------------------------------";
-            logf ~level:`info "@. -- Procedure summary for %a = " Varinfo.pp procedure;
-                print_indented 0 summary;
-                logf ~level:`info "@.";
-            (*debug_print_wedge_of_transition summary;*)
+            let level = if !chora_print_summaries then `always else `info in
+            let summary = get_procedure_summary procedure in
+            print_procedure_summary procedure summary level;
             Format.printf "---- Bounds on the cost of %a@." Varinfo.pp procedure;
             if K.mem_transform cost summary then begin
               (*logf ~level:`always "Procedure: %a" Varinfo.pp procedure;*)
@@ -958,8 +971,11 @@ let _ =
   CmdLine.register_pass
     ("-chora",
      analyze_chora,
-     " Compositional recurrence analysis for non-linear recursion")
-
+     " Compositional recurrence analysis for non-linear recursion");
+  CmdLine.register_config
+    ("-chora-summaries",
+     Arg.Set chora_print_summaries,
+     " Print procedure summaries during the CHORA analysis pass")
 
 (* 
 
