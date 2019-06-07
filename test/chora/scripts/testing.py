@@ -17,6 +17,23 @@ def parent(k,d) :
 
 testroot = parent(2,os.path.realpath(__file__))
 benchroot = os.path.join(testroot,"benchmarks/")
+this_script_dir = parent(1,os.path.realpath(__file__)) 
+config_path = os.path.join(this_script_dir,"local-test-settings.conf")
+blank_config = """\
+chora_binary_path=%s
+icra_binary_path=
+duetcra_binary_path=
+""" % os.path.join(parent(4,os.path.realpath(__file__)),"duet.native")
+config = dict()
+if not os.path.exists(config_path) :
+    with open(config_path,"wb") as config_file :
+        print >>config_file, blank_config
+with open(config_path,"rb") as config_file :
+    for line in config_file :
+        if len(line.strip()) == 0 or "=" not in line : continue
+        parts = line.split("=",1)
+        if len(parts[0].strip()) == 0 : continue
+        config[parts[0].strip()]=parts[1].strip()
 
 # Note to self: output parsing needs to be attached to specific tools
 
