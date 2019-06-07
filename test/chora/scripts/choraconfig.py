@@ -175,7 +175,7 @@ def clone_component(kind, ID) :
 
 def print_known_components(kind) : 
     known_components = list()
-    for py in os.listdir(defsdirs[kind]) :
+    for py in os.listdir(defdirs[kind]) :
         if py.startswith(kind+"_") and py.endswith(".py") :
             known_components.append(py[len(kind+"_"):-len(".py")])
     print "Valid "+kind+" IDs are: " + str(known_components)
