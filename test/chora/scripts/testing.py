@@ -1,6 +1,7 @@
 #!/usr/bin/python
 import os.path, sys, glob, datetime, time, subprocess, shutil, re
 import xml.sax.saxutils, csv, tempfile
+import choraconfig
 
 def usage() :
     print "USAGE: testing.py --run <batchname>"
@@ -8,273 +9,10 @@ def usage() :
     print "   OR  testing.py --format <dir> [<options>...]"
     print "         to reformat the results of the previous testing run in <dir>"
     sys.exit(0)
-def makedirs(d) :
-    if os.path.exists(d) : return
-    os.makedirs(d)
-def parent(k,d) :
-    if k == 0 : return d
-    return parent(k-1,os.path.dirname(d))
-
-testroot = parent(2,os.path.realpath(__file__))
-benchroot = os.path.join(testroot,"benchmarks/")
-this_script_dir = parent(1,os.path.realpath(__file__)) 
-config_path = os.path.join(this_script_dir,"local-test-settings.conf")
-blank_config = """\
-chora_binary_path=%s
-icra_binary_path=
-duetcra_binary_path=
-""" % os.path.join(parent(4,os.path.realpath(__file__)),"duet.native")
-config = dict()
-if not os.path.exists(config_path) :
-    with open(config_path,"wb") as config_file :
-        print >>config_file, blank_config
-with open(config_path,"rb") as config_file :
-    for line in config_file :
-        if len(line.strip()) == 0 or "=" not in line : continue
-        parts = line.split("=",1)
-        if len(parts[0].strip()) == 0 : continue
-        config[parts[0].strip()]=parts[1].strip()
-
-# Note to self: output parsing needs to be attached to specific tools
-
-class StringRing :
-    def __init__(self, length) :
-        self.length = length
-        self.ring = list() 
-        for i in range(self.length) : self.ring.append("")
-        self.cursor = 0
-    def advance(self) :
-        self.cursor = (self.cursor + 1) % self.length
-    def add(self, line) :
-        self.ring[self.cursor] = line
-        self.advance()
-    def readout(self) :
-        output = ""
-        self.advance()
-        for i in range(self.length) :
-            line = self.ring[self.cursor]
-            if line != "" : 
-                if output != "" : output += "\n"
-                output += line
-            self.advance()
-        return output
-
-def generic_error_callout(params) :
-    if "logpath" not in params : 
-        print "ERROR: generic_error_callout was called without a path"
-        sys.exit(0)
-    ring = StringRing(5)
-    # It probably isn't safe to say "error" here; that word is used
-    #   too often in non-exceptional cases.
-    errorRegex = re.compile("failure|fatal|exception",re.IGNORECASE)
-    with open(params["logpath"],"rb") as logfile :
-        mode = 0
-        for line in logfile :
-            if len(line.strip()) == 0 : continue
-            if errorRegex.search(line) :
-                ring.add(line.rstrip())
-    return ring.readout()
-
-
-def chora_assert_results(params) :
-    if "logpath" not in params : 
-        print "ERROR: chora_assert_results was called without a path"
-        sys.exit(0)
-    #e.g., "Assertion on line 13 FAILED"
-    results = list()
-    kind_dict = {"PASSED":"PASS","FAILED":"FAIL"}
-    regex = "Assertion on line ([-0-9]+) ([A-Za-z]+)"
-    with open(params["logpath"],"rb") as logfile :
-        for line in logfile :
-            matches = re.match(regex, line)
-            if matches :
-                for kind in kind_dict :
-                    if kind in matches.group(2) :
-                        results.append( (kind_dict[kind], int(matches.group(1))) )
-                        break
-                else :
-                    results.append( ("UNRECOGNIZED", int(matches.group(1))) )
-    return results
-
-def chora_bounds_callout(params) :
-    if "logpath" not in params : 
-        print "ERROR: chora_bounds_callout was called without a path"
-        sys.exit(0)
-    output = ""
-    with open(params["logpath"],"rb") as logfile :
-        mode = 0
-        for line in logfile :
-            if mode == 0 : 
-                if line.startswith("---- Bounds on"):
-                    output += line
-                    #mode = 1
-                    mode = 2 
-                    continue
-            #if mode == 1 :
-            #    if line.startswith("Procedure: "):
-            #        mode = 2
-            #        continue
-            if mode == 2 :
-                if line.startswith("-----"):
-                    mode = 0
-                    continue
-                output += line
-    return output
-
-chora = dict() 
-chora["ID"] = "chora"
-chora["displayname"] = "CHORA"
-chora["cmd"] = [parent(2,testroot) + "/duet.native","-chora","{filename}"]
-chora["bounds_callout"] = chora_bounds_callout
-chora["assert_results"] = chora_assert_results
-chora["error_callout"] = generic_error_callout
-
-
-def icra_assert_results(params) :
-    if "logpath" not in params : 
-        print "ERROR: icra_assert_results was called without a path"
-        sys.exit(0)
-    #e.g., "Assertion on line 13 FAILED"
-    results = list()
-    kind_dict = {"PASSED":"PASS","FAILED":"FAIL"}
-    regex = "Assertion on line ([-0-9]+) ([A-Za-z]+)"
-    with open(params["logpath"],"rb") as logfile :
-        for line in logfile :
-            matches = re.search(regex, line)
-            if matches :
-                for kind in kind_dict :
-                    if kind in matches.group(2) :
-                        results.append( (kind_dict[kind], int(matches.group(1))) )
-                        break
-                else :
-                    results.append( ("UNRECOGNIZED", int(matches.group(1))) )
-    return results
-
-def icra_bounds_callout(params) :
-    if "logpath" not in params : 
-        print "ERROR: icra_bounds_callout was called without a path"
-        sys.exit(0)
-    output = ""
-    with open(params["logpath"],"rb") as logfile :
-        mode = 0
-        for line in logfile :
-            if mode == 0 : 
-                if line.startswith("Bounds on Variables"):
-                    output += line
-                    mode = 1
-                    continue
-            if mode == 1 : # skip a line
-                mode = 2 
-                continue
-            if mode == 2 :
-                if line.startswith("==========="):
-                    mode = 0
-                    continue
-                output += line
-    return output
-
-# really should have a tool root
-icra = dict() 
-icra["ID"] = "icra"
-icra["displayname"] = "ICRA"
-icra["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/icra","{filename}"]
-icra["bounds_callout"] = icra_bounds_callout
-icra["assert_results"] = icra_assert_results
-icra["error_callout"] = generic_error_callout
-
-
-def duet_assert_results(params) :
-    if "logpath" not in params : 
-        print "ERROR: duet_assert_results was called without a path"
-        sys.exit(0)
-    if "tmpfile" not in params : 
-        print "ERROR: duet_assert_results was called without a tmpfile"
-        sys.exit(0)
-    results = list()
-    regex = "(PASS|FAIL)"
-    with open(params["tmpfile"],"rb") as tmpfile :
-        for line in tmpfile :
-            for result in re.findall(regex, line) :
-                results.append( (result, 0) )
-                break
-    return results
-
-def duet_bounds_callout(params) :
-    if "logpath" not in params : 
-        print "ERROR: duet_bounds_callout was called without a path"
-        sys.exit(0)
-    output = ""
-    with open(params["logpath"],"rb") as logfile :
-        mode = 0
-        for line in logfile :
-            if mode == 0 : 
-                if line.startswith("Procedure:"):
-                    output += line
-                    mode = 2 
-                    continue
-            if mode == 2 :
-                #if line.startswith("==========="):
-                #    mode = 0
-                #    continue
-                output += line
-    return output
-
-# really should have a tool root
-duetcra = dict() 
-duetcra["ID"] = "duetcra"
-duetcra["displayname"] = "CRA"
-duetcra["shortname"] = "cra"
-duetcra["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/duet/duet.native",
-                  "-cra","{filename}","-test","{tmpfile}"]
-duetcra["bounds_callout"] = duet_bounds_callout
-duetcra["assert_results"] = duet_assert_results
-duetcra["no_assert_line_numbers"] = True
-duetcra["error_callout"] = generic_error_callout
-
-duetrba = dict() 
-duetrba["ID"] = "duetrba"
-duetrba["displayname"] = "CRA:rba"
-duetrba["shortname"] = "cra"
-duetrba["cmd"] = ["/u/j/b/jbreck/research/2013/ICRA/icra/duet/duet.native",
-                  "-rba","{filename}","-test","{tmpfile}"]
-duetrba["bounds_callout"] = duet_bounds_callout
-duetrba["assert_results"] = duet_assert_results
-duetrba["no_assert_line_numbers"] = True
-duetrba["error_callout"] = generic_error_callout
-
-
-def defaulting_field(d,*fields) :
-    if len(fields) == 0 :
-        print "TEST SCRIPT ERROR: missing field in tool description: " + str(d)
-    if fields[0] in d : return d[fields[0]]
-    return defaulting_field(d,*fields[1:])
 
 def yes_post_slash(d) :
     if d[-1] == "/" : return d
     return d + "/"
-
-def hastrue(d,attr) : return attr in d and d[attr] == True
-
-tool_IDs = set()
-class Tool :
-    def __init__(self, d) :
-        global tool_IDs
-        self.d = d
-        self.ID = d["ID"]
-        if not re.match("([a-z]|[A-Z]|[0-9]|-|_)+", self.ID) :
-            print "TEST SCRIPT ERROR: a tool ID may be only alphanumeric with dashes and underscores: " + self.ID
-            sys.exit(0)
-        if self.ID in tool_IDs :
-            print "TEST SCRIPT ERROR: there is more than one tool with the same ID: " + self.ID
-            sys.exit(0)
-        tool_IDs.add(self.ID)
-        self.cmd = d["cmd"]
-        self.displayname = defaulting_field(d,"displayname","ID")
-        self.shortname = defaulting_field(d,"shortname","ID")
-    def has(self, attr) : return (attr in self.d)
-    def get(self, attr) : return self.d[attr]
-    def hastrue(self, attr) :
-        return self.has(attr) and (self.get(attr) == True)
 
 # TODO: allow for timing of multiple trials
 class Datfile :
@@ -307,10 +45,10 @@ class Datfile :
         if key not in self.data[source][tool] : return default
         return self.data[source][tool][key]
 
-#tool_dicts = [chora, icra, duetcra, duetrba]
-tool_dicts = [duetcra, duetrba, icra, chora]
-
-alltools = {D["ID"]:Tool(D) for D in tool_dicts}
+##tool_dicts = [chora, icra, duetcra, duetrba]
+#tool_dicts = [duetcra, duetrba, icra, chora]
+#
+#alltools = {D["ID"]:Tool(D) for D in tool_dicts}
 
 def detect_safe_benchmark(path) :
     # return "safe" or "unsafe" or "mixed"
@@ -318,74 +56,6 @@ def detect_safe_benchmark(path) :
     if (('unsafe' in basename) or ('false-unreach-call' in basename)) :
         return "unsafe"
     return "safe"
-
-bbatch = dict()
-bbatch["timeout"] = 300
-#bbatch["toolIDs"] = sorted(alltools.keys())
-bbatch["toolIDs"] = ["chora"]
-bbatch["root"] = benchroot
-bbatch["format_alternate_bgcolor"] = True
-
-rbabatch = dict(bbatch)
-rbabatch["ID"] = "rba"
-rbabatch["files"] = glob.glob(benchroot + "rba/*.c")
-rbabatch["format_style"] = "rba"
-rbabatch["warmupfiles"] = ["rba/cost_fib.c","rba/cost_fib_eq.c"]
-
-abatch = dict(bbatch)
-abatch["ID"] = "assert"
-abatch["files"] = glob.glob(benchroot + "assert/chora_simple/*.c")
-abatch["format_style"] = "assert"
-
-allassert = dict(abatch)
-allassert["ID"] = "allassert"
-allassert["toolIDs"] = ["duetcra", "icra", "chora"]
-
-#allrba["toolIDs"] = ["chora", "icra", "duetrba"]
-
-#maybe say which is which?
-
-c4b = dict(bbatch)
-c4b["ID"] = "c4b"
-c4b["root"] = "/u/j/b/jbreck/research/2013/ICRA/icra/WALi-OpenNWA/Examples/cprover/tests/"
-c4b["files"] = glob.glob(c4b["root"] + "c4b/*.c")
-c4b["format_style"] = "assert"
-
-icrabatch = dict(bbatch)
-icrabatch["ID"] = "icra"
-icrabatch["root"] = "/u/j/b/jbreck/research/2013/ICRA/icra/WALi-OpenNWA/Examples/cprover/tests/"
-# Small, for quick testing:
-#icrabatch["files"] = (glob.glob(icrabatch["root"] + "c4b/*.c")[:4] + 
-#                      glob.glob(icrabatch["root"] + "sv-benchmarks/loops/*.c")[-4:])
-# Too big:
-#icrabatch["files"] = [F for F in [os.path.join(R,F) for R,D,Fs in os.walk(icrabatch["root"]) for F in Fs] if F.endswith(".c")]
-icra_dirs = ["c4b", "misc-recursive", "duet", "", "STAC/polynomial/assert", 
-"snlee/snlee_tests", "STAC/FiniteDifferencing", "STAC/LESE", "STAC/LowerBound", 
-"STAC/LZ", "sv-benchmarks/loop-acceleration", "sv-benchmarks/loop-invgen", 
-"sv-benchmarks/loop-lit", "sv-benchmarks/loop-new", "sv-benchmarks/loops", 
-"sv-benchmarks/recursive", "sv-benchmarks/recursive-simple", 
-"rec-sv-benchmarks/rec-loop-lit", "rec-sv-benchmarks/rec-loop-new", 
-"recurrences", "exponential", "frankenstein/HOLA", "frankenstein/relational", 
-"misc2017", "max_equals", "branching_loops", "strings_numeric", "ethereum"]
-# maybe make this a lambda?
-icrabatch["files"] = []
-try :
-    icrabatch["files"] = [os.path.join(icrabatch["root"],D,F) for D,Fs in 
-           [(D, os.listdir(os.path.join(icrabatch["root"],D))) for D in icra_dirs] # DELETE ME
-        for F in Fs if F.endswith(".c")] 
-except : pass
-icrabatch["format_style"] = "assert"
-icrabatch["toolIDs"] = ["duetcra","icra","chora"]
-
-quickchora = dict(icrabatch)
-quickchora["ID"] = "quickchora"
-quickchora["toolIDs"] = ["chora"]
-quickchora["timeout"] = 30
-quickchora["instant_error_callouts"] = True
-
-batch_dicts = [rbabatch, abatch, c4b, icrabatch, allassert, quickchora]
-
-allbatches = {D["ID"]:D for D in batch_dicts}
 
 def reformat_float_string(s,form) :
     try :
@@ -449,6 +119,7 @@ def aggregate_assert_results(assert_str, exitType, is_safe, style, error_str) :
                 out["unsafe_good"] = 1
             else :
                 out["conclusion"] = "PASS"
+                out["unsound"] = True
         else :
             out["conclusion"] = "MIXED"
     else :
@@ -468,7 +139,7 @@ def aggregate_assert_results(assert_str, exitType, is_safe, style, error_str) :
             out["html"] = conclusion_html
     return out
 
-def check_flag(flag, formatting) :
+def check_formatting_flag(flag, formatting) :
     return flag in formatting and bool(formatting[flag]) == True
 
 class HTMLTable :
@@ -511,7 +182,7 @@ class HTMLTable :
         bgIndex = 0
         for row in rows :
             styling = ""
-            if check_flag("alternate_bgcolor",formatting) : 
+            if check_formatting_flag("alternate_bgcolor",formatting) : 
                 styling = 'style="background-color:'+["white","#CCCCCC"][bgIndex]+';"'
                 bgIndex = 1 - bgIndex
             output += "<tr "+styling+">"
@@ -524,55 +195,55 @@ class HTMLTable :
 def sort_dir_major(f) : return ( os.path.dirname(f), os.path.basename(f) )
 
 def run(batch, stamp) :
-    tools = [alltools[I] for I in batch["toolIDs"]]
+    tools = [choraconfig.get_tool_by_ID(I) for I in batch.get("toolIDs")]
     print "RUN ID=" + stamp
-    outroot = testroot + "/output"
+    outroot = choraconfig.testroot + "/output"
     outrun = outroot + "/" + stamp
     runlogpath = outrun + "/run.dat"
     outsources = outrun + "/sources/"
-    makedirs(outsources)
+    choraconfig.makedirs(outsources)
     formatting = []
-    formatting.append("format_toolIDs="+",".join(batch["toolIDs"]))
-    for key in batch :
+    formatting.append("format_toolIDs="+",".join(batch.get("toolIDs")))
+    for key in batch.d :
         if key.startswith("format_") :
-            formatting.append(key+"="+str(batch[key]))
+            formatting.append(key+"="+str(batch.d[key]))
     formattingpath = outrun + "/formatdata.txt"
     with open(formattingpath, "wb") as formatfile :
         for line in formatting :
             print >>formatfile, line
-    if not "root" in batch:
+    if not batch.hasattr("root"):
         print "ERROR: batch['root'] was not specified"
         return
-    for filename in sorted(batch["files"]) :
-        if not filename.startswith(batch["root"]) :
+    for filename in sorted(batch.get("files")) :
+        if not filename.startswith(batch.get("root")) :
             print "ERROR: not all files in batch are under the batch['root']"
-            print "   batch['root']="+str(batch["root"])
+            print "   batch['root']="+str(batch.get("root"))
             print "   exceptional filename = "+str(filename)
             return
-    if "warmupfiles" in batch and len(batch["warmupfiles"]) > 0 :
+    if batch.hasattr("warmupfiles") and len(batch.get("warmupfiles")) > 0 :
         print ""
         print "  Warmup..."
         with open(os.devnull, 'w') as devnull:
             for tool in tools : 
-                for filename in batch["warmupfiles"] :
-                    cmd = [S.format(filename=filename) for S in tool.cmd]
+                for filename in batch.get("warmupfiles") :
+                    cmd = [S.format(filename=filename) for S in tool.get("cmd")]
                     subprocess.call(cmd, stdout=devnull, stderr=devnull)
     print ""
     with open(runlogpath,"wb") as runlog :
-        for filename in sorted(batch["files"], key=sort_dir_major) :
+        for filename in sorted(batch.get("files"), key=sort_dir_major) :
             nicename = filename
-            br_prefix = yes_post_slash(batch["root"])
+            br_prefix = yes_post_slash(batch.get("root"))
             if nicename.startswith(br_prefix) : nicename = nicename[len(br_prefix):]
             sys.stdout.write(" " + nicename + " ")
             sourcedest = outsources + nicename
-            makedirs(os.path.dirname(sourcedest))
+            choraconfig.makedirs(os.path.dirname(sourcedest))
             shutil.copyfile(filename, sourcedest)
             for tool in tools : 
                 handle, tmpfile = tempfile.mkstemp(suffix="choratmpfile.txt")
                 os.close(handle)
-                cmd = [S.format(filename=filename, tmpfile = tmpfile) for S in tool.cmd]
+                cmd = [S.format(filename=filename, tmpfile = tmpfile) for S in tool.get("cmd")]
                 logpath = outrun + "/logs/" + nicename + "." + tool.ID + ".log"
-                makedirs(os.path.dirname(logpath))
+                choraconfig.makedirs(os.path.dirname(logpath))
                 startTime = time.time()
                 exitType = "unknown"
                 sys.stdout.write("["+tool.ID+":")
@@ -587,16 +258,18 @@ def run(batch, stamp) :
                         timeTaken = time.time() - startTime
                         if child.poll() is not None :
                             if (child.returncode != 0 and
-                               not tool.hastrue("nonzero_error_code_is_benign")) :
+                               not tool.flag("nonzero_error_code_is_benign")) :
                                 exitType = "error"
-                                sys.stdout.write("ERROR] ")
+                                sys.stdout.write(choraconfig.color_start+
+                                                 "ERROR"+
+                                                 choraconfig.color_stop+"] ")
                                 sys.stdout.flush()
                                 break
                             exitType = "default"
                             sys.stdout.write("OK] ")
                             sys.stdout.flush()
                             break
-                        if timeTaken >= batch["timeout"] :
+                        if timeTaken >= batch.get("timeout") :
                             child.kill()
                             exitType = "timeout"
                             sys.stdout.write("T/O] ")
@@ -609,19 +282,26 @@ def run(batch, stamp) :
                 runlogline += "time="+str(timeTaken)+"\t"
                 #trialNo = 0
                 #runlogline += "trial="+trialNo+"\t" # maybe?
-                if tool.has("assert_results") :
+                if tool.hasattr("assert_results") :
                     results = tool.get("assert_results")({"logpath":logpath,"tmpfile":tmpfile})
-                    if tool.has("no_assert_line_numbers") : 
+                    if tool.flag("no_assert_line_numbers") : 
                         result_str = ";".join(R[0]+"@?" for R in results)
                     else : 
                         results = sorted(results,key=lambda R:R[1])
                         result_str = ";".join(R[0]+"@"+str(R[1]) for R in results)
                     runlogline += "assert=["+result_str+"]\t"
+                    if batch.flag("instant_unsound_callouts") :
+                        is_safe = detect_safe_benchmark(filename)
+                        if is_safe == "unsafe" and any(R[0].startswith("PASS") for R in results) :
+                            sys.stdout.write("\n   Warning: "+choraconfig.color_start+
+                                    "UNSOUND"+choraconfig.color_stop+" result!\n")
+                            sys.stdout.write("  ")
+                            sys.stdout.flush()
                 runlogline += "runid="+stamp+"\t"
                 while len(runlogline) > 0 and runlogline[-1]=="\t" : runlogline = runlogline[:-1]
                 print >>runlog, runlogline
-                if (exitType == "error" and tool.has("error_callout") 
-                    and hastrue(batch,"instant_error_callouts")) :
+                if (exitType == "error" and tool.hasattr("error_callout") 
+                    and batch.flag("instant_error_callouts")) :
                     error_raw = tool.get("error_callout")({"logpath":logpath})
                     if len(error_raw.strip()) > 0 :
                         sys.stdout.write("\n   Possible error-related text in logfile follows:\n")
@@ -642,7 +322,7 @@ created_html_files = list()
 
 def format_run(outrun) :
     if not os.path.isdir(outrun) : 
-        outrun = testroot + "/output/" + outrun
+        outrun = choraconfig.testroot + "/output/" + outrun
     if not os.path.isdir(outrun) : 
         print "Wasn't a directory: " + outrun
         usage()
@@ -695,12 +375,13 @@ def format_run(outrun) :
             format_toolIDs = formatting["toolIDs"].split(",")
             tools = list()
             for toolID in format_toolIDs :
-                if toolID in alltools :
-                    tools.append(alltools[toolID])
-                else :
-                    print "WARNING: unrecognized tool ID: " + toolID
-                    print "         Creating a default tool with that name."
-                    tools.append(Tool({"ID":toolID}))
+                tools.append(choraconfig.get_tool_by_ID(toolID))
+                #if toolID in alltools :
+                #    tools.append(alltools[toolID])
+                #else :
+                #    print "WARNING: unrecognized tool ID: " + toolID
+                #    print "         Creating a default tool with that name."
+                #    tools.append(Tool({"ID":toolID}))
 
             table = HTMLTable()
             table.prefix = """<colgroup> <col span="1" style="width:600px;"> </colgroup>\n"""
@@ -719,8 +400,8 @@ def format_run(outrun) :
                 table.set("head","benchmark","Benchmark")
                 table.set("head","logs","Full<br>Logs")
                 for tool in tools :
-                    table.set("head","tooltime/"+tool.ID, tool.displayname + "<br>Time (s)")
-                    table.set("head","toolrba/"+tool.ID, tool.displayname + "<br>Resource Bounds")
+                    table.set("head","tooltime/"+tool.ID, tool.get("displayname") + "<br>Time (s)")
+                    table.set("head","toolrba/"+tool.ID, tool.get("displayname") + "<br>Resource Bounds")
                 for sourcefile in sourcefiles :
                     sourcefilekey = "src/"+sourcefile
                     table.set(sourcefilekey,"benchmark","<a href='sources/"+sourcefile+"'>"+sourcefile+"</a>")
@@ -732,7 +413,7 @@ def format_run(outrun) :
                         logpath = logroot + logrel
                         if not os.path.exists(logpath) : continue
                         loglinks.append("<a href='logs/" + logrel + "'>[" + tool.ID + "]</a>")
-                        if tool.has("bounds_callout") : 
+                        if tool.hasattr("bounds_callout") : 
                             bc_result = ("<pre>"
                                         +xml.sax.saxutils.escape(
                                           tool.get("bounds_callout")
@@ -760,8 +441,8 @@ def format_run(outrun) :
                 table.set("head","benchmark","Benchmark")
                 table.set("head","logs","Full<br>Logs")
                 for tool in tools :
-                    table.set("head","tooltime/"+tool.ID, tool.displayname + "<br>Time (s)")
-                    table.set("head","toolassert/"+tool.ID, tool.displayname + "<br>Assertions")
+                    table.set("head","tooltime/"+tool.ID, tool.get("displayname") + "<br>Time (s)")
+                    table.set("head","toolassert/"+tool.ID, tool.get("displayname") + "<br>Assertions")
                 for sourcefile in sourcefiles :
                     sourcefilekey = "src/"+sourcefile
                     table.set(sourcefilekey,"benchmark","<a href='sources/"+sourcefile+"'>"+sourcefile+"</a>")
@@ -776,7 +457,7 @@ def format_run(outrun) :
                         exitType = datfile.get_default(sourcefile,tool.ID,"exit","")
                         is_safe = detect_safe_benchmark(sourcefile)
                         error_str = ""
-                        if exitType == "error" and tool.has("error_callout"):
+                        if exitType == "error" and tool.hasattr("error_callout"):
                             error_raw = tool.get("error_callout")({"logpath":logpath})
                             if len(error_raw.strip()) > 0 :
                                 error_str = ("\nPossible error-related text in logfile follows:\n"+
@@ -787,19 +468,20 @@ def format_run(outrun) :
                         table.set(sourcefilekey, "toolassert/"+tool.ID, assert_out["html"])
 
                         if not os.path.exists(logpath) : continue
-                        loglinks.append("<a href='logs/" + logrel + "'>[" + tool.shortname + "]</a>")
+                        loglinks.append("<a href='logs/" + logrel + "'>[" + tool.get("shortname") + "]</a>")
                     table.set(sourcefilekey,"logs"," ".join(loglinks))
                 print >>html, table.show(formatting)
                 print >>html, "</body></html>"
 
-def list_known_batch_names() :
-    keys = sorted(allbatches.keys())
-    print "Known batch IDs are: [" + ", ".join(keys) + "]"
+#def list_known_batch_names() :
+#    keys = sorted(allbatches.keys())
+#    print "Known batch IDs are: [" + ", ".join(keys) + "]"
 
 if __name__ == "__main__" :
     if len(sys.argv) < 3 :
         if "--run" in sys.argv :
-            list_known_batch_names()
+            #list_known_batch_names()
+            choraconfig.print_known_batches()
         usage()
     if sys.argv[1] == "--run" : 
         batchid = sys.argv[2]
@@ -815,11 +497,12 @@ if __name__ == "__main__" :
         #    print "ERROR: need to supply a batch name with --batch=<name>"
         #    list_known_batch_names()
         #    sys.exit(0)
-        if batchid not in allbatches :
-            print "ERROR: unrecognized batch name"
-            list_known_batch_names()
-            sys.exit(0)
-        run(allbatches[batchid],stamp)
+        #if batchid not in allbatches :
+        #    print "ERROR: unrecognized batch name"
+        #    list_known_batch_names()
+        #    sys.exit(0)
+        #run(allbatches[batchid],stamp)
+        run(choraconfig.get_batch_by_ID(batchid),stamp)
     elif sys.argv[1] == "--format" :
         if len(sys.argv) < 2 : usage()
         outrun = sys.argv[2]
