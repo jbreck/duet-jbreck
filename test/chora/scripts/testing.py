@@ -17,15 +17,11 @@ def yes_post_slash(d) :
 # TODO: allow for timing of multiple trials
 class Datfile :
     def __init__(self, datpath) :
-        #datcellregex = re.compile("([^=\t]+=[^\t]+)")
         self.data = dict()
         with open(datpath,"rb") as dat :
             csvreader = csv.reader(dat, delimiter="\t")
-            #for line in dat :
             for row in csvreader :
-                #if len(line.strip()) == 0 : continue
                 if len(row) == 0 : continue
-                #cellpairs = [C.split("=",1) for C in datcellregex.findall(line)]
                 cellpairs = [C.split("=",1) for C in row if "=" in C]
                 cells = {P[0]:P[1] for P in cellpairs}
                 if "source" not in cells :
@@ -44,11 +40,6 @@ class Datfile :
         if tool not in self.data[source] : return default
         if key not in self.data[source][tool] : return default
         return self.data[source][tool][key]
-
-##tool_dicts = [chora, icra, duetcra, duetrba]
-#tool_dicts = [duetcra, duetrba, icra, chora]
-#
-#alltools = {D["ID"]:Tool(D) for D in tool_dicts}
 
 def detect_safe_benchmark(path) :
     # return "safe" or "unsafe" or "mixed"
@@ -473,14 +464,10 @@ def format_run(outrun) :
                 print >>html, table.show(formatting)
                 print >>html, "</body></html>"
 
-#def list_known_batch_names() :
-#    keys = sorted(allbatches.keys())
-#    print "Known batch IDs are: [" + ", ".join(keys) + "]"
-
 if __name__ == "__main__" :
+    # obviously, I should use a real command-line processing system here
     if len(sys.argv) < 3 :
         if "--run" in sys.argv :
-            #list_known_batch_names()
             choraconfig.print_known_batches()
         usage()
     if sys.argv[1] == "--run" : 
@@ -490,18 +477,6 @@ if __name__ == "__main__" :
             matches = re.match("--stamp=(.*)",arg)
             if matches :
                 stamp = matches.group(1)
-            #matches = re.match("--batch=(.*)",arg)
-            #if matches :
-            #    batchid = matches.group(1)
-        #if batchid is None :
-        #    print "ERROR: need to supply a batch name with --batch=<name>"
-        #    list_known_batch_names()
-        #    sys.exit(0)
-        #if batchid not in allbatches :
-        #    print "ERROR: unrecognized batch name"
-        #    list_known_batch_names()
-        #    sys.exit(0)
-        #run(allbatches[batchid],stamp)
         run(choraconfig.get_batch_by_ID(batchid),stamp)
     elif sys.argv[1] == "--format" :
         if len(sys.argv) < 2 : usage()
