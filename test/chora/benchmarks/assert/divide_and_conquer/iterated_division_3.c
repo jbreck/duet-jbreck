@@ -6,8 +6,7 @@ void main(int n) {
   __VERIFIER_assume(n > 4);
   while(n != 4) {
     //p = p - 7;
-    __VERIFIER_assume(n > 400);
-    //__VERIFIER_assume(n > 0);
+    __VERIFIER_assume(n > 4);
     n = n / 2;
     //n = n - 1;
     __cost++;
