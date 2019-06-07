@@ -1,4 +1,4 @@
-import choraconfig, glob
+import choraconfig, glob, os.path
 
 batch = choraconfig.get_default_batch_dict()
 
