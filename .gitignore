@@ -34,3 +34,6 @@ duet/duet
 #tag files
 */tags
 */TAGS
+
+#python-related files
+*.pyc
