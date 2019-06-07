@@ -6,8 +6,12 @@ import choraconfig
 def usage() :
     print "USAGE: testing.py --run <batchname>"
     print "         to start a new testing run"
-    print "   OR  testing.py --format <dir> [<options>...]"
-    print "         to reformat the results of the previous testing run in <dir>"
+    print "   OR  testing.py --format <run_id>"
+    print "         to reformat the results of the previous testing run with ID <run_id>"
+    print ""
+    print "   To define your own batches of tests, or analysis tools,"
+    print "     create or modify the files in batchdefs/batch_*.py or"
+    print "     tooldefs/tool_*.py."
     sys.exit(0)
 
 def yes_post_slash(d) :
