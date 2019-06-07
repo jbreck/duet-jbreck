@@ -198,6 +198,7 @@ def run(batch, stamp) :
     outsources = outrun + "/sources/"
     choraconfig.makedirs(outsources)
     formatting = []
+    formatting.append("format_batchID="+batch.get("ID"))
     formatting.append("format_toolIDs="+",".join(batch.get("toolIDs")))
     for key in batch.d :
         if key.startswith("format_") :
@@ -233,6 +234,7 @@ def run(batch, stamp) :
             sourcedest = outsources + nicename
             choraconfig.makedirs(os.path.dirname(sourcedest))
             shutil.copyfile(filename, sourcedest)
+            anyProblem = False
             for tool in tools : 
                 handle, tmpfile = tempfile.mkstemp(suffix="choratmpfile.txt")
                 os.close(handle)
@@ -259,6 +261,7 @@ def run(batch, stamp) :
                                                  "ERROR"+
                                                  choraconfig.color_stop+"] ")
                                 sys.stdout.flush()
+                                anyProblem = True
                                 break
                             exitType = "default"
                             sys.stdout.write("OK] ")
@@ -269,6 +272,7 @@ def run(batch, stamp) :
                             exitType = "timeout"
                             sys.stdout.write("T/O] ")
                             sys.stdout.flush()
+                            anyProblem = True
                             break
                 runlogline = ""
                 runlogline += "source="+nicename+"\t"
@@ -292,6 +296,7 @@ def run(batch, stamp) :
                                     "UNSOUND"+choraconfig.color_stop+" result!\n")
                             sys.stdout.write("  ")
                             sys.stdout.flush()
+                            anyProblem = True
                 runlogline += "runid="+stamp+"\t"
                 while len(runlogline) > 0 and runlogline[-1]=="\t" : runlogline = runlogline[:-1]
                 print >>runlog, runlogline
@@ -305,7 +310,12 @@ def run(batch, stamp) :
                         sys.stdout.write("  ")
                         sys.stdout.flush()
                 os.remove(tmpfile)
-            print "" 
+            if batch.flag("hide_default_exits") and not anyProblem :
+                sys.stdout.write("\r" + " "*115 + "\r")
+                sys.stdout.flush()
+            else :
+                sys.stdout.write("\n")
+                sys.stdout.flush()
 
     newstamp = datetime.datetime.now().strftime("%Y/%m/%d at %H:%M:%S")
     print ""
@@ -422,7 +432,8 @@ def format_run(outrun) :
                     table.set(sourcefilekey,"logs"," ".join(loglinks))
                 print >>html, table.show(formatting)
                 print >>html, "</body></html>"
-            if formatting["style"] == "assert" :
+                print "HTML output available at: " + htmlpath
+            elif formatting["style"] == "assert" :
                 # register rows and columns
                 table.register_row("head")
                 for sourcefile in sourcefiles : table.register_row("src/"+sourcefile)
@@ -467,6 +478,9 @@ def format_run(outrun) :
                     table.set(sourcefilekey,"logs"," ".join(loglinks))
                 print >>html, table.show(formatting)
                 print >>html, "</body></html>"
+                print "HTML output available at: " + htmlpath
+            else :
+                print "Unrecognized formatting style: " + formatting["style"] 
 
 if __name__ == "__main__" :
     # obviously, I should use a real command-line processing system here
