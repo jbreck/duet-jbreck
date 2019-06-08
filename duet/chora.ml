@@ -719,31 +719,7 @@ let mk_height_based_summary
         (by putting them into the transform) *)
 ;;
 
-let scc_mem (scc:BURG.scc) en ex = 
-  List.fold_left (fun found (p_entry,p_exit,pathexpr) -> 
-    found || (p_entry == en && p_exit = ex)) false scc.procs;;
-
-let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.scc) = 
-  let pe_call_edge_set = function
-    | `Edge (s, t) ->
-      begin match WeightedGraph.edge_weight ts s t with
-        | Call (en, ex) -> 
-          if scc_mem scc en ex 
-          then IntPairSet.singleton (s,t)
-          else IntPairSet.empty
-        | _ -> IntPairSet.empty
-      end
-    | `Mul (x, y) | `Add (x, y) -> IntPairSet.union x y
-    | `Star x -> x
-    | `Zero | `One -> IntPairSet.empty
-  in
-  let call_edges = eval pe_call_edge_set pathexpr in 
-  logf ~level:`info "  calls = [ ";
-  IntPairSet.iter (fun (s,t) -> logf ~level:`info "(%d,%d) " s t) call_edges;
-  logf ~level:`info "]\n";
-  call_edges
-
-let make_top_down_summary p_entry path_weight_internal top call_edges = 
+let make_top_down_summary p_entry path_weight_internal top scc_call_edges = 
   let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
   let height_var_val = Cra.VVal height_var in 
   let height_var_sym = Cra.V.symbol_of height_var_val in 
@@ -758,7 +734,7 @@ let make_top_down_summary p_entry path_weight_internal top call_edges =
     print_indented 15 fragment_weight;
     logf ~level:`info "";
     K.add running_total fragment_weight
-    ) call_edges K.zero in
+    ) scc_call_edges K.zero in
   logf ~level:`info "  ]";
   let phi_td = K.mul set_height_zero (K.star (K.mul increment_height sum_of_fragments)) in
   logf ~level:`info "  phi_td = [";
@@ -896,6 +872,62 @@ let check_assertions rg query main assertions =
           );
     Format.printf "=================================\n"
 
+let scc_mem (scc:BURG.scc) en ex = 
+  List.fold_left (fun found (p_entry,p_exit,pathexpr) -> 
+    found || (p_entry == en && p_exit = ex)) false scc.procs;;
+
+let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.scc) = 
+  let pe_call_edge_set = function
+    | `Edge (s, t) ->
+      begin match WeightedGraph.edge_weight ts s t with
+        | Call (en, ex) -> 
+          if scc_mem scc en ex 
+          then IntPairSet.singleton (s,t)
+          else IntPairSet.empty
+        | _ -> IntPairSet.empty
+      end
+    | `Mul (x, y) | `Add (x, y) -> IntPairSet.union x y
+    | `Star x -> x
+    | `Zero | `One -> IntPairSet.empty
+  in
+  let scc_call_edges = eval pe_call_edge_set pathexpr in 
+  logf ~level:`info "  calls = [ ";
+  IntPairSet.iter (fun (s,t) -> logf ~level:`info "(%d,%d) " s t) scc_call_edges;
+  logf ~level:`info "]\n";
+  scc_call_edges
+
+
+(** Given a path expression and a function which tests whether an edge (u,v)
+ *    is a call back into the current SCC, return a pair (r,n) of path
+ *    expressions describing the recursive paths (r) which always call 
+ *    back into the current SCC) and non-recursive paths n which never do.
+ * *)
+(*
+let factor_pair pathexpr is_scc_call =
+  let ctx = Pathexpr.mk_context pathexpr in 
+  let factor_alg = function
+    | `Edge (s, t) -> if is_scc_call s t 
+                      then (Pathexpr.mk_edge ctx s t, Pathexpr.mk_zero ctx)
+                      else (Pathexpr.mk_zero ctx, Pathexpr.mk_edge ctx s t)
+    | `Add ((r1,n1), (r2,n2)) -> 
+       (Pathexpr.mk_add r1 r2, Pathexpr.mk_add n1 n2)
+    | `Mul ((r1,n1), (r2,n2)) -> 
+       (Pathexpr.mk_add 
+         (Pathexpr.mk_add 
+         (Pathexpr.mk_mul r1 r2) (* ...    *)
+         (Pathexpr.mk_mul r1 n2))(*  rec   *)
+         (Pathexpr.mk_mul n1 r2),(* ...    *)
+          Pathexpr.mk_mul n1 n2) (* nonrec *)
+    | `Star (r,n) -> (*  Rec looks like (r+n)*r(r+n)* and non-rec is n* *)
+       let mixed = Pathexpr.mk_star (Pathexpr.mk_add r n) in
+       (Pathexpr.mk_mul (Pathexpr.mk_mul mixed r) mixed,
+        Pathexpr.mk_star n)
+    | `Zero -> (Pathexpr.mk_zero, Pathexpr.mk_zero)
+    | `One -> (Pathexpr.mk_zero, Pathexpr.mk_one)
+  in
+  eval factor_alg pathexpr
+*)
+
 let build_summarizer ts =  
   let program_vars = 
     let open CfgIr in let file = get_gfile() in
@@ -922,16 +954,19 @@ let build_summarizer ts =
     List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in 
   let top = K.havoc program_vars in 
   let summarizer (scc : BURG.scc) path_weight_internal = 
-    logf ~level:`info "I saw an SCC:";
+    logf ~level:`info "Processing a call-graph SCC:";
     List.iter (fun (u,v,p) -> (logf ~level:`info "  Proc(%d,%d) = %t" u v (fun f -> Pathexpr.pp f p))) scc.procs;
     let summaries = List.map (fun (p_entry,p_exit,pathexpr) ->
       let weight_of_call_zero cs ct cen cex = K.zero in
-      let call_edges = find_recursive_calls ts pathexpr scc in 
-      if IntPairSet.cardinal call_edges = 0 then 
+      let scc_call_edges = find_recursive_calls ts pathexpr scc in 
+      let is_scc_call s t = match WeightedGraph.edge_weight ts s t with
+                            | Call (en, ex) -> scc_mem scc en ex 
+                            | _ -> false in
+      if IntPairSet.cardinal scc_call_edges = 0 then 
         (p_entry,p_exit, project (path_weight_internal p_entry p_exit weight_of_call_zero))
       else 
       let (top_down_summary, ht_var_sym) = 
-        make_top_down_summary p_entry path_weight_internal top call_edges in
+        make_top_down_summary p_entry path_weight_internal top scc_call_edges in
       let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in
       logf ~level:`info "  base_case = [";
       print_indented 15 base_case_weight;
