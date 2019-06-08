@@ -717,8 +717,8 @@ let mk_height_based_summary
     | Some v -> Cra.V.is_global v
     | None -> false*)
   in 
-  let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
-  logf ~level:`info "    wedgified = %t@." (fun f -> Wedge.pp f wedge_summary);
+  (*let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
+  logf ~level:`info "    wedgified = %t@." (fun f -> Wedge.pp f wedge_summary);*)
   height_based_summary
   (* Things to do: 
      - construct a havoc-like transition with post variables,
