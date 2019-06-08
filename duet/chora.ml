@@ -33,6 +33,7 @@ module BURG = WeightedGraph.MakeBottomUpRecGraph(struct
 end)
 
 let chora_print_summaries = ref false
+let chora_print_wedges = ref false
 
 (* ugly: copied from newtonDomain just for debugging *)
 let print_indented ?(level=`info) indent k =
@@ -104,18 +105,6 @@ let increment_variable value =
       Cra.srk
       [(Srk.Syntax.mk_const Cra.srk (Cra.V.symbol_of value));
        (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int 1))])
-
-(*let debug_print_wedge_of_transition tr = 
-  let (tr_symbols, body) = to_transition_formula tr in
-  let projection x = 
-    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
-    || 
-    match Cra.V.of_symbol x with 
-    | Some v -> Cra.V.is_global v
-    | None -> false (* false *)
-  in 
-  let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
-  logf ~level:`info "\n  wedgified for debugging = %t \n\n" (fun f -> Wedge.pp f wedge)*)
 
 (* PASS REC FLAG IN FROM OUTSIDE *)
 (* Make bound analysis? *)
@@ -710,14 +699,14 @@ let mk_height_based_summary
   logf ~level:`info "@.    ht_summary = ";
   print_indented 17 height_based_summary;
   logf ~level:`info "@.";
-  let projection x = 
+  (*let projection x = 
     (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false final_tr_symbols)
     (*||
     match Cra.V.of_symbol x with 
     | Some v -> Cra.V.is_global v
     | None -> false*)
   in 
-  (*let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
+  let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
   logf ~level:`info "    wedgified = %t@." (fun f -> Wedge.pp f wedge_summary);*)
   height_based_summary
   (* Things to do: 
@@ -776,6 +765,31 @@ let make_top_down_summary p_entry path_weight_internal top call_edges =
   print_indented 15 phi_td;
   logf ~level:`info "  ]\n";
   phi_td, height_var_sym;;
+
+let get_procedure_summary query rg procedure = 
+  let entry = (RG.block_entry rg procedure).did in
+  let exit = (RG.block_exit rg procedure).did in
+  BURG.path_weight query entry exit
+
+let debug_print_wedge_of_transition tr = 
+  let (tr_symbols, body) = to_transition_formula tr in
+  let projection x = 
+    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
+    || 
+    match Cra.V.of_symbol x with 
+    | Some v -> Cra.V.is_global v
+    | None -> false (* false *)
+  in 
+  let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
+  logf ~level:`info "\n  wedgified for debugging = %t \n\n" (fun f -> Wedge.pp f wedge)
+
+let print_procedure_summary procedure summary = 
+  let level = if !chora_print_summaries then `always else `info in
+  logf ~level:level "---------------------------------";
+  logf ~level:level " -- Procedure summary for %a = " Varinfo.pp procedure;
+  print_indented ~level:level 0 summary;
+  logf ~level:level "";
+  if !chora_print_wedges then debug_print_wedge_of_transition summary else ()
 
 let analyze_chora file =
   Cra.populate_offset_table file;
@@ -844,17 +858,6 @@ let analyze_chora file =
     (* *) 
     let query = BURG.mk_query ts summarizer in
     (* *)
-    let get_procedure_summary procedure = 
-        let entry = (RG.block_entry rg procedure).did in
-        let exit = (RG.block_exit rg procedure).did in
-        BURG.path_weight query entry exit in
-    let print_procedure_summary procedure summary level = 
-        logf ~level:level "---------------------------------";
-        logf ~level:level "@. -- Procedure summary for %a = " Varinfo.pp procedure;
-        print_indented ~level:level 0 summary;
-        logf ~level:level "@."
-        (*debug_print_wedge_of_transition summary;*)
-        in
     (* Resource-bound analysis *)
     begin
       let cost_opt =
@@ -868,10 +871,10 @@ let analyze_chora file =
       match cost_opt with 
       | None -> 
         (logf ~level:`info "Could not find __cost variable";
-        if !chora_print_summaries then
+        if !chora_print_summaries || !chora_print_wedges then
             RG.blocks rg |> BatEnum.iter (fun procedure ->
-            let summary = get_procedure_summary procedure in 
-            print_procedure_summary procedure summary `always))
+            let summary = get_procedure_summary query rg procedure in 
+            print_procedure_summary procedure summary))
       | Some cost ->
         (let cost_symbol = Cra.V.symbol_of cost in
         let exists x =
@@ -881,9 +884,8 @@ let analyze_chora file =
         in
         Format.printf "===== Resource-Usage Bounds =====\n";
         RG.blocks rg |> BatEnum.iter (fun procedure ->
-            let level = if !chora_print_summaries then `always else `info in
-            let summary = get_procedure_summary procedure in
-            print_procedure_summary procedure summary level;
+            let summary = get_procedure_summary query rg procedure in
+            print_procedure_summary procedure summary;
             Format.printf "---- Bounds on the cost of %a@." Varinfo.pp procedure;
             if K.mem_transform cost summary then begin
               (*logf ~level:`always "Procedure: %a" Varinfo.pp procedure;*)
@@ -975,7 +977,11 @@ let _ =
   CmdLine.register_config
     ("-chora-summaries",
      Arg.Set chora_print_summaries,
-     " Print procedure summaries during the CHORA analysis pass")
+     " Print procedure summaries during the CHORA analysis pass");
+  CmdLine.register_config
+    ("-chora-wedges",
+     Arg.Set chora_print_wedges,
+     " Print procedure summaries abstracted to wedges")
 
 (* 
 
