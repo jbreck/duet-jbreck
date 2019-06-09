@@ -583,6 +583,159 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
     new_coeffs_and_dims in 
   blk_add_entry;;
 
+let build_summary_from_solution 
+    solution b_in_symbols b_in_b_out_map bounds top_down_formula program_vars = 
+  let subst_b_in_with_zeros sym = 
+    if Srk.Syntax.Symbol.Set.mem sym !b_in_symbols 
+    then Srk.Syntax.mk_real Cra.srk QQ.zero 
+    else Srk.Syntax.mk_const Cra.srk sym in 
+  let solution_starting_at_zero = 
+    Srk.Syntax.substitute_const Cra.srk subst_b_in_with_zeros solution in 
+  (* let simpler = SrkSimplify.simplify_terms Cra.srk with_zeros in *)
+  logf ~level:`info "@.    simplified: %a" 
+      (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;
+  let bounding_conjunction = 
+    let make_bounding_conjuncts (in_sym,term) =
+      let out_sym = Srk.Syntax.Symbol.Map.find in_sym !b_in_b_out_map in 
+      (* let subst_post sym = Srk.Syntax.mk_const Cra.srk (post_symbol sym) in 
+      let post_term = Srk.Syntax.substitute_const Cra.srk subst_post term in *)
+      Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym)
+    in
+    let bounding_conjuncts = 
+      List.map make_bounding_conjuncts bounds.bound_pairs in 
+    Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
+  logf ~level:`info "@.    bddg conj: %a" 
+      (Srk.Syntax.Formula.pp Cra.srk) bounding_conjunction; 
+  let big_conjunction = 
+    Srk.Syntax.mk_and Cra.srk [top_down_formula; 
+                               solution_starting_at_zero;
+                               bounding_conjunction] in
+  logf ~level:`info "@.    big conj: %a" 
+      (Srk.Syntax.Formula.pp Cra.srk) big_conjunction; 
+  (* FIXME: I should really be iterating over the SCC footprint variables,
+            not over the list of all program variables. *)
+  let final_tr_symbols = 
+    List.map (fun var -> 
+      let pre_sym = Cra.V.symbol_of var in 
+      let post_sym = post_symbol pre_sym in 
+      (pre_sym,post_sym) ) program_vars in 
+  let height_based_summary = of_transition_formula final_tr_symbols big_conjunction in 
+  logf ~level:`info "@.    ht_summary = ";
+  print_indented 17 height_based_summary;
+  logf ~level:`info "@.";
+  (*let projection x = 
+    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false final_tr_symbols)
+    (*||
+    match Cra.V.of_symbol x with 
+    | Some v -> Cra.V.is_global v
+    | None -> false*)
+  in 
+  let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
+  logf ~level:`info "    wedgified = %t@." (fun f -> Wedge.pp f wedge_summary);*)
+  height_based_summary
+  (* Things to do: 
+     - construct a havoc-like transition with post variables,
+        but use the solution as a guard
+     - the guard needs to be a conjunction of the terms in the
+        B_out definitions, but with things postified
+     - and I'm constructing a new inequation in each case...
+     - MAKE SURE to havoc the B_out variables themselves!
+        (by putting them into the transform) *)
+
+let sanity_check_recurrences recurrences term_of_id = 
+  (if not ((List.length recurrences.blk_transforms) ==
+           (List.length recurrences.blk_adds)) then
+     failwith "Matrix recurrence transform/add blocks mismatched.");
+  let print_expr i term = 
+      logf ~level:`trace "  term_of_id[%d]=%a" i (Srk.Syntax.Expr.pp Cra.srk) term in
+  Array.iteri print_expr term_of_id;
+  let adds_size = List.fold_left (fun t arr -> t + Array.length arr) 0 recurrences.blk_adds in
+  (if not (adds_size == (Array.length term_of_id)) then
+     (Format.printf "Size of term_of_id is %d@." (Array.length term_of_id);
+     Format.printf "Size of blk_transforms is %d@." (Array.length term_of_id);
+     failwith "Matrix recurrence and term_of_id are of mismatched size."));
+  let check_block_sizes trb ab = 
+    let goodsize = (Array.length trb) in
+    if not (goodsize == (Array.length ab)) then
+        failwith "Matrix recurrence transform/add blocks are unequal size."
+    else ()
+    in
+  List.iter2 check_block_sizes recurrences.blk_transforms recurrences.blk_adds
+
+(* Filter out recurrences having unmet dependencies         *)
+(*        AND in the future maybe prioritize recurrences    *)
+(*   Don't extract more than one recurrence for each symbol *)
+let rec filter_candidates recurrence_candidates recurrences =
+  logf ~level:`trace "  Filtering recurrence candidates";
+  let nb_recurs = List.length !recurrence_candidates in 
+  let earlier_candidates = ref Srk.Syntax.Symbol.Set.empty in 
+  let drop_redundant_recs recur = 
+    (* Rule: at most one recurrence per bounding symbol *) 
+    let result = 
+      (not (Srk.Syntax.Symbol.Map.mem recur.inner_sym recurrences.done_symbols)) 
+      &&
+      (not (Srk.Syntax.Symbol.Set.mem recur.inner_sym !earlier_candidates)) in
+    earlier_candidates := 
+      Srk.Syntax.Symbol.Set.add recur.inner_sym !earlier_candidates; 
+    result in 
+  recurrence_candidates := 
+      List.filter drop_redundant_recs !recurrence_candidates;
+  let symbols_of_candidates = 
+    let add_symbol_candidate syms recur = 
+      Srk.Syntax.Symbol.Set.add recur.inner_sym syms in
+    List.fold_left add_symbol_candidate
+      Srk.Syntax.Symbol.Set.empty
+      !recurrence_candidates in 
+  let drop_rec_with_unmet_deps recur = 
+    List.fold_left (fun ok dep -> ok &&
+        (* Rule: no unmet dependencies *)
+        ((Srk.Syntax.Symbol.Set.mem dep symbols_of_candidates)
+         ||
+         (Srk.Syntax.Symbol.Map.mem dep recurrences.done_symbols)))
+      true
+      recur.dependencies in 
+  recurrence_candidates := 
+      List.filter drop_rec_with_unmet_deps !recurrence_candidates;
+  if (List.length !recurrence_candidates) < nb_recurs
+  then filter_candidates recurrence_candidates recurrences 
+
+(* Accept remaining recurrence candidates *) 
+let accept_and_build_recurrences 
+    recurrence_candidates recurrences allow_interdependence =
+  let foreach_candidate_accept recurrences candidate = 
+    accept_candidate candidate recurrences in 
+  let recurrences = 
+    List.fold_left 
+      foreach_candidate_accept recurrences !recurrence_candidates in 
+  (* PHASE: build recurrence matrices *) 
+  let foreach_block_build recurrences candidate_block = 
+    if List.length candidate_block = 0 then recurrences else
+    let nRecurs = List.length candidate_block in 
+    logf ~level:`trace "  Beginning to build a block of size: %d" (nRecurs);
+    let blk_transform = Array.make_matrix nRecurs nRecurs QQ.zero in 
+    let foreach_candidate_build add_entries candidate = 
+      let sub_dim_to_rec_num = 
+        build_sub_dim_to_rec_num_map recurrences candidate.sub_cs in 
+      (build_recurrence candidate.sub_cs recurrences 
+        candidate.inner_sym candidate.outer_sym 
+        candidate.inequation blk_transform sub_dim_to_rec_num)::add_entries in
+    let add_entries = 
+      List.fold_left 
+        foreach_candidate_build [] candidate_block in 
+    let blk_add = Array.of_list (List.rev add_entries) in (* REV entries to match term_of_id *) 
+    logf ~level:`info "  Registering add block of size: %d" (Array.length blk_add);
+    register_recurrence blk_transform blk_add recurrences in 
+  let recurrences = 
+    if not allow_interdependence then 
+      (* Each candidate is a separate block *)
+      List.fold_left 
+        (fun r c -> foreach_block_build r [c]) 
+        recurrences !recurrence_candidates
+    else 
+      (* The list of all candidates forms a recurrence block *)
+      foreach_block_build recurrences !recurrence_candidates in
+  recurrences
+
 let is_negative q = ((QQ.compare q QQ.zero) < 0) 
 let is_non_negative q = ((QQ.compare q QQ.zero) >= 0)
 (*let is_at_least_one q = ((QQ.compare q QQ.one) >= 0)*)
@@ -816,82 +969,12 @@ let mk_height_based_summary
     List.iter find_best_self_coefficient !recurrence_candidates;
     *)
     (* *)
-    (* PHASE: filter out recurrences having unmet dependencies  *)
-    (*        AND in the future maybe prioritize recurrences    *)
-    (*   Don't extract more than one recurrence for each symbol *)
-    let rec filter_candidates () =
-      logf ~level:`trace "  Filtering recurrence candidates";
-      begin
-        let nb_recurs = List.length !recurrence_candidates in 
-        let earlier_candidates = ref Srk.Syntax.Symbol.Set.empty in 
-        let drop_redundant_recs recur = 
-          (* Rule: at most one recurrence per bounding symbol *) 
-          let result = 
-            (not (Srk.Syntax.Symbol.Map.mem recur.inner_sym recurrences.done_symbols)) 
-            &&
-            (not (Srk.Syntax.Symbol.Set.mem recur.inner_sym !earlier_candidates)) in
-          earlier_candidates := 
-            Srk.Syntax.Symbol.Set.add recur.inner_sym !earlier_candidates; 
-          result in 
-        recurrence_candidates := 
-            List.filter drop_redundant_recs !recurrence_candidates;
-        let symbols_of_candidates = 
-          let add_symbol_candidate syms recur = 
-            Srk.Syntax.Symbol.Set.add recur.inner_sym syms in
-          List.fold_left add_symbol_candidate
-            Srk.Syntax.Symbol.Set.empty
-            !recurrence_candidates in 
-        let drop_rec_with_unmet_deps recur = 
-          List.fold_left (fun ok dep -> ok &&
-              (* Rule: no unmet dependencies *)
-              ((Srk.Syntax.Symbol.Set.mem dep symbols_of_candidates)
-               ||
-               (Srk.Syntax.Symbol.Map.mem dep recurrences.done_symbols)))
-            true
-            recur.dependencies in 
-        recurrence_candidates := 
-            List.filter drop_rec_with_unmet_deps !recurrence_candidates;
-        if (List.length !recurrence_candidates) < nb_recurs
-        then filter_candidates ()
-      end in 
     (*logf ~level:`info "  N candidates before filter: %d@." (List.length !recurrence_candidates);*)
-    filter_candidates ();
+    filter_candidates recurrence_candidates recurrences; 
     (*logf ~level:`info "  N candidates after filter:  %d@." (List.length !recurrence_candidates);*)
     
-    (* PHASE: accept remaining recurrence candidates *) 
-    let foreach_candidate_accept recurrences candidate = 
-      accept_candidate candidate recurrences in 
-    let recurrences = 
-      List.fold_left 
-        foreach_candidate_accept recurrences !recurrence_candidates in 
-      
-    (* PHASE: build recurrence matrices *) 
-    let foreach_block_build recurrences candidate_block = 
-      if List.length candidate_block = 0 then recurrences else
-      let nRecurs = List.length candidate_block in 
-      logf ~level:`trace "  Beginning to build a block of size: %d" (nRecurs);
-      let blk_transform = Array.make_matrix nRecurs nRecurs QQ.zero in 
-      let foreach_candidate_build add_entries candidate = 
-        let sub_dim_to_rec_num = 
-          build_sub_dim_to_rec_num_map recurrences candidate.sub_cs in 
-        (build_recurrence candidate.sub_cs recurrences 
-          candidate.inner_sym candidate.outer_sym 
-          candidate.inequation blk_transform sub_dim_to_rec_num)::add_entries in
-      let add_entries = 
-        List.fold_left 
-          foreach_candidate_build [] candidate_block in 
-      let blk_add = Array.of_list (List.rev add_entries) in (* REV entries to match term_of_id *) 
-      logf ~level:`info "  Registering add block of size: %d" (Array.length blk_add);
-      register_recurrence blk_transform blk_add recurrences in 
-    let recurrences = 
-      if not allow_interdependence then 
-        (* Each candidate is a separate block *)
-        List.fold_left 
-          (fun r c -> foreach_block_build r [c]) 
-          recurrences !recurrence_candidates
-      else 
-        (* The list of all candidates forms a recurrence block *)
-        foreach_block_build recurrences !recurrence_candidates in
+    let recurrences = accept_and_build_recurrences 
+      recurrence_candidates recurrences allow_interdependence in
     logf ~level:`trace "  [ -- end of stratum -- ]";
     (* Did we get new recurrences? If so, then look for a higher stratum. *)
     if count_recurrences recurrences > nb_previous_recurrences then 
@@ -907,30 +990,10 @@ let mk_height_based_summary
   (* Here recurrence extraction is complete *)
   (* *)
   (* *********************************************************************** *)
-  (* ********             Sanity-checks of recurrences              ******** *)
-  let term_of_id = BatDynArray.to_array recurrences.term_of_id in 
-  (if not ((List.length recurrences.blk_transforms) ==
-           (List.length recurrences.blk_adds)) then
-     failwith "Matrix recurrence transform/add blocks mismatched.");
-  let print_expr i term = 
-      logf ~level:`trace "  term_of_id[%d]=%a" i (Srk.Syntax.Expr.pp Cra.srk) term in
-  Array.iteri print_expr term_of_id;
-  let adds_size = List.fold_left (fun t arr -> t + Array.length arr) 0 recurrences.blk_adds in
-  (if not (adds_size == (Array.length term_of_id)) then
-     (Format.printf "Size of term_of_id is %d@." (Array.length term_of_id);
-     Format.printf "Size of blk_transforms is %d@." (Array.length term_of_id);
-     failwith "Matrix recurrence and term_of_id are of mismatched size."));
-  let check_block_sizes trb ab = 
-    let goodsize = (Array.length trb) in
-    if not (goodsize == (Array.length ab)) then
-        failwith "Matrix recurrence transform/add blocks are unequal size."
-    else ()
-    in
-  List.iter2 check_block_sizes recurrences.blk_transforms recurrences.blk_adds;
-  (* *)
-  (* *********************************************************************** *)
   (* ********               Recurrence Solving                      ******** *)
   (* *)
+  let term_of_id = BatDynArray.to_array recurrences.term_of_id in 
+  sanity_check_recurrences recurrences term_of_id;
   (* Change to pairs of transform_add blocks *)
   (* Add the appropriate constraint to the loop counter, so K >= 0 *)
   (* Send the matrix recurrence to OCRS and obtain a solution *)
@@ -946,62 +1009,8 @@ let mk_height_based_summary
   (* *)
   (* *********************************************************************** *)
   (* ********      Building summaries using recurrence solution     ******** *)
-  let subst_b_in_with_zeros sym = 
-    if Srk.Syntax.Symbol.Set.mem sym !b_in_symbols 
-    then Srk.Syntax.mk_real Cra.srk QQ.zero 
-    else Srk.Syntax.mk_const Cra.srk sym in 
-  let solution_starting_at_zero = 
-    Srk.Syntax.substitute_const Cra.srk subst_b_in_with_zeros solution in 
-  (* let simpler = SrkSimplify.simplify_terms Cra.srk with_zeros in *)
-  logf ~level:`info "@.    simplified: %a" 
-      (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;
-  let bounding_conjunction = 
-    let make_bounding_conjuncts (in_sym,term) =
-      let out_sym = Srk.Syntax.Symbol.Map.find in_sym !b_in_b_out_map in 
-      (* let subst_post sym = Srk.Syntax.mk_const Cra.srk (post_symbol sym) in 
-      let post_term = Srk.Syntax.substitute_const Cra.srk subst_post term in *)
-      Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym)
-    in
-    let bounding_conjuncts = 
-      List.map make_bounding_conjuncts bounds.bound_pairs in 
-    Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
-  logf ~level:`info "@.    bddg conj: %a" 
-      (Srk.Syntax.Formula.pp Cra.srk) bounding_conjunction; 
-  let big_conjunction = 
-    Srk.Syntax.mk_and Cra.srk [top_down_formula; 
-                               solution_starting_at_zero;
-                               bounding_conjunction] in
-  logf ~level:`info "@.    big conj: %a" 
-      (Srk.Syntax.Formula.pp Cra.srk) big_conjunction; 
-  (* FIXME: I should really be iterating over the SCC footprint variables,
-            not over the list of all program variables. *)
-  let final_tr_symbols = 
-    List.map (fun var -> 
-      let pre_sym = Cra.V.symbol_of var in 
-      let post_sym = post_symbol pre_sym in 
-      (pre_sym,post_sym) ) program_vars in 
-  let height_based_summary = of_transition_formula final_tr_symbols big_conjunction in 
-  logf ~level:`info "@.    ht_summary = ";
-  print_indented 17 height_based_summary;
-  logf ~level:`info "@.";
-  (*let projection x = 
-    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false final_tr_symbols)
-    (*||
-    match Cra.V.of_symbol x with 
-    | Some v -> Cra.V.is_global v
-    | None -> false*)
-  in 
-  let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
-  logf ~level:`info "    wedgified = %t@." (fun f -> Wedge.pp f wedge_summary);*)
-  height_based_summary
-  (* Things to do: 
-     - construct a havoc-like transition with post variables,
-        but use the solution as a guard
-     - the guard needs to be a conjunction of the terms in the
-        B_out definitions, but with things postified
-     - and I'm constructing a new inequation in each case...
-     - MAKE SURE to havoc the B_out variables themselves!
-        (by putting them into the transform) *)
+  build_summary_from_solution 
+    solution b_in_symbols b_in_b_out_map bounds top_down_formula program_vars
 ;;
 
 let make_top_down_summary p_entry path_weight_internal top scc_call_edges = 
