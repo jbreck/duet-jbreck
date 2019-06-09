@@ -14,7 +14,129 @@ module Var = Cra.V
 include Log.Make(struct let name = "chora" end)
 module A = Interproc.MakePathExpr(Cra.K)
 
-open Pathexpr
+(*open Pathexpr*)
+
+(* ---------------------------------- *)
+(*    Begin stuff from old pathexpr   *)
+
+module NPathexpr = struct
+  open BatHashcons
+  
+  type 'a open_pathexpr =
+    [ `Edge of int * int
+    | `Mul of 'a * 'a
+    | `Add of 'a * 'a
+    | `Star of 'a
+    | `Zero
+    | `One ]
+  
+  type 'a algebra = 'a open_pathexpr -> 'a
+  
+  type pe =
+    | Edge of int * int
+    | Mul of t * t
+    | Add of t * t
+    | Star of t
+    | One
+    | Zero
+  and t = pe hobj
+  
+  module HC = BatHashcons.MakeTable(struct
+      type t = pe
+      let equal x y = match x, y with
+        | One, One | Zero, Zero -> true
+        | Edge (s, t), Edge (s', t') -> s = s' && t = t'
+        | Mul (s, t), Mul (s', t') -> s.tag = s'.tag && t.tag = t'.tag
+        | Add (s, t), Add (s', t') -> s.tag = s'.tag && t.tag = t'.tag
+        | Star t, Star t' -> t.tag = t'.tag
+        | _ -> false
+      let hash = function
+        | Edge (x, y) -> Hashtbl.hash (0, x, y)
+        | Mul (x, y) -> Hashtbl.hash (1, x.tag, y.tag)
+        | Add (x, y) -> Hashtbl.hash (2, x.tag, y.tag)
+        | Star x -> Hashtbl.hash (3, x.tag)
+        | Zero -> Hashtbl.hash 4
+        | One -> Hashtbl.hash 5
+    end)
+  module HT = BatHashtbl.Make(struct
+      type t = pe hobj
+      let equal s t = s.tag = t.tag
+      let hash t = t.hcode
+    end)
+  
+  type context = HC.t
+  type 'a table = 'a HT.t
+  
+  let mk_one pe = HC.hashcons pe One
+  let mk_zero pe = HC.hashcons pe Zero
+  let mk_mul pe x y = match x.obj, y.obj with
+    | Zero, _ | _, Zero -> mk_zero pe
+    | One, _ -> y
+    | _, One -> x
+    | _, _ ->
+      HC.hashcons pe (Mul (x, y))
+  let mk_add pe x y = match x.obj, y.obj with
+    | Zero, _ -> y
+    | _, Zero -> x
+    | _, _ -> HC.hashcons pe (Add (x, y))
+  let mk_star pe x = HC.hashcons pe (Star x)
+  
+  let mk_star_simplify pe x = match x.obj with
+    | Zero -> mk_one pe
+    | One -> mk_one pe
+    | _ -> HC.hashcons pe (Star x)
+  
+  let mk_edge pe src tgt = HC.hashcons pe (Edge (src, tgt))
+  
+  let rec pp formatter pathexpr =
+    let open Format in
+    match pathexpr.obj with
+    | Edge (x, y) -> fprintf formatter "@[%d->%d@]" x y
+    | Mul (x, y) -> fprintf formatter "@[(%a)@ . (%a)@]" pp x pp y
+    | Add (x, y) -> fprintf formatter "@[%a@ + %a@]" pp x pp y
+    | Star x -> fprintf formatter "@[(%a)*@]" pp x
+    | Zero -> fprintf formatter "0"
+    | One -> fprintf formatter "1"
+  
+  let mk_table ?(size=991) () = HT.create size      
+  let mk_context ?(size=991) () = HC.create size
+  
+  let eval ?(table=HT.create 991) (f : 'a open_pathexpr -> 'a) =
+    let rec go expr =
+      if HT.mem table expr then
+        HT.find table expr
+      else
+        let result =
+          match expr.obj with
+          | One -> f `One
+          | Zero -> f `Zero
+          | Mul (x, y) -> f (`Mul (go x, go y))
+          | Add (x, y) -> f (`Add (go x, go y))
+          | Star x -> f (`Star (go x))
+          | Edge (s, t) -> f (`Edge (s, t)) 
+        in
+        HT.add table expr result;
+        result
+    in
+    go
+  
+  let forget table p =
+    let safe = eval (function
+        | `One | `Zero -> true
+        | `Edge (s, t) -> p s t
+        | `Mul (x, y) | `Add (x, y) -> x && y
+        | `Star x -> x)
+    in
+    HT.filteri_inplace (fun k _ -> safe k) table
+end
+
+(*     End stuff from old pathexpr    *)
+(* ---------------------------------- *)
+
+(* ---------------------------------- *)
+(* Begin stuff from old weightedGraph *)
+(*             preamble               *)
+
 open BatPervasives
 
 module IntPair = struct
@@ -35,8 +157,8 @@ type 'a weighted_graph = 'a WeightedGraph.weighted_graph
 
 let project = K.exists Cra.V.is_global
 
-(* ---------------------------------- *)
-(* Begin stuff from old weightedGraph *)
+(* .................................. *)
+(*          proper contents           *)
 
 
 module MakeBottomUpRecGraph (W : Weight) = struct
@@ -89,9 +211,9 @@ module MakeBottomUpRecGraph (W : Weight) = struct
     { summaries : W.t M.t; (* Map calls to weights that summarize all paths in
                               the call *)
       labels : (W.t label) M.t; (* Interpretation for all path expression edges *)
-      graph : Pathexpr.t t; (* Path expression weighted graph *)
-      table : W.t table; (* Path expression memo table  *)
-      context : Pathexpr.context (* Path expression context *) }
+      graph : NPathexpr.t t; (* Path expression weighted graph *)
+      table : W.t NPathexpr.table; (* Path expression memo table  *)
+      context : NPathexpr.context (* Path expression context *) }
 
 
   type t = recgraph
@@ -124,11 +246,11 @@ module MakeBottomUpRecGraph (W : Weight) = struct
     | `One -> W.one
 
   let pathexp_algebra context =
-    { mul = mk_mul context;
-      add = mk_add context;
-      star = mk_star context;
-      zero = mk_zero context;
-      one = mk_one context }
+    { mul = NPathexpr.mk_mul context;
+      add = NPathexpr.mk_add context;
+      star = NPathexpr.mk_star_simplify context;
+      zero = NPathexpr.mk_zero context;
+      one = NPathexpr.mk_one context }
 
   (* For each (s,t) call reachable from [src], add an edge from [src] to [s]
      with the path weight from [src] to to the call.  *)
@@ -145,7 +267,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
          | Call (call, _) ->
            let weight =
              path_weight query.graph src u
-             |> eval ~table:query.table weight_algebra
+             |> NPathexpr.eval ~table:query.table weight_algebra
              |> W.project
            in
            if M.mem (src, call) query'.labels then
@@ -159,7 +281,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
              | _ -> assert false
            else
              let graph' =
-               add_edge query'.graph src (mk_edge query.context src call) call
+               add_edge query'.graph src (NPathexpr.mk_edge query.context src call) call
              in
              let labels' = M.add (src, call) (Weight weight) query'.labels in
              { query' with graph = graph';
@@ -173,15 +295,15 @@ module MakeBottomUpRecGraph (W : Weight) = struct
   module CallGraphSCCs = Graph.Components.Make(CallGraph)
 
   type scc = 
-    { (* path_graph : Pathexpr.t weighted_graph; *)
-     procs : (int * int * Pathexpr.t) list }
+    { (* path_graph : NPathexpr.t weighted_graph; *)
+     procs : (int * int * NPathexpr.t) list }
   
   (* This non-linear version of mk_query must be called with a 
         summarizer function that knows how to summarize a
         strongly connected component of the call graph *)
   let mk_query ?(delay=1) rg summarizer =
-    let table = mk_table () in
-    let context = mk_context () in
+    let table = NPathexpr.mk_table () in
+    let context = NPathexpr.mk_context () in
     let calls = (* All calls that appear on a call edge *)
       fold_edges (fun (_, label, _) callset ->
           match label with
@@ -192,7 +314,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
     in
     let path_graph =
       { graph = rg.graph;
-        labels = M.mapi (fun (u,v) _ -> mk_edge context u v) rg.labels;
+        labels = M.mapi (fun (u,v) _ -> NPathexpr.mk_edge context u v) rg.labels;
         algebra = pathexp_algebra context }
     in
 
@@ -236,7 +358,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
           | `Star x -> x
           | `Zero | `One -> CallSet.empty
         in
-        let table = mk_table () in
+        let table = NPathexpr.mk_table () in
         (* Edges added by the following action may no longer be necessary: *)
         
         let initial_callgraph =
@@ -251,7 +373,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
           M.fold (fun proc pathexpr callgraph ->
               CallSet.fold (fun target callgraph ->
                   CallGraph.add_edge callgraph target proc)
-                (eval ~table pe_procs pathexpr)
+                (NPathexpr.eval ~table pe_procs pathexpr)
                 callgraph)
             call_pathexpr
             (*CallGraph.empty*) initial_callgraph (* Use CallGraph.empty here? *)
@@ -319,7 +441,7 @@ module MakeBottomUpRecGraph (W : Weight) = struct
             | Call (en, ex) -> M.find (en, ex) query'.summaries)
       in
       path_weight query'.graph src tgt
-      |> eval weight
+      |> NPathexpr.eval weight
       (*|> eval ~table:query.table weight*)
   
 end
@@ -873,15 +995,13 @@ let extract_recurrence_for_symbol
   end 
 
 let mk_height_based_summary 
-    bounds 
-    recursive_weight
-    program_vars post_height_sym top_down_formula =  
+    (*bounds recursive_weight program_vars post_height_sym top_down_formula = *)
+    recursive_weight_nobc bounds program_vars post_height_sym top_down_formula =  
   (* REMOVE BASE CASE semantically using the "recursion_flag" *)
-  let initially_no_recursion = (assign_value_to_literal bounds.recursion_flag 0) in 
+  (*let initially_no_recursion = (assign_value_to_literal bounds.recursion_flag 0) in 
   let eventually_recursion = (assume_value_eq_literal bounds.recursion_flag 1) in 
   let recursive_weight_nobc = 
-    K.mul (K.mul initially_no_recursion recursive_weight) eventually_recursion in
-  (* ASSUME B_in NON-NEGATIVE*)
+    K.mul (K.mul initially_no_recursion recursive_weight) eventually_recursion in*)
   let (tr_symbols, body) = to_transition_formula recursive_weight_nobc in
   logf ~level:`info "  transition_formula_body: @.%a@." (Srk.Syntax.Formula.pp Cra.srk) body;
   let b_out_definitions = ref [] in 
@@ -1021,7 +1141,7 @@ let make_top_down_summary p_entry path_weight_internal top scc_call_edges =
   logf ~level:`info "  fragments = [";
   let sum_of_fragments = IntPairSet.fold (fun (s,t) running_total -> 
     let fragment_weight = path_weight_internal p_entry s weight_of_call_top in
-    (* (logf ~level:`info "  << %t >> \n" (fun f -> Pathexpr.pp f fragment_weight)) *)
+    (* (logf ~level:`info "  << %t >> \n" (fun f -> NPathexpr.pp f fragment_weight)) *)
     (* Format.fprintf Format.std_formatter "<<( %a )>> \n" K.pp fragment_weight *)
     print_indented 15 fragment_weight;
     logf ~level:`info "";
@@ -1182,7 +1302,7 @@ let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.sc
     | `Star x -> x
     | `Zero | `One -> IntPairSet.empty
   in
-  let scc_call_edges = eval pe_call_edge_set pathexpr in 
+  let scc_call_edges = NPathexpr.eval pe_call_edge_set pathexpr in 
   logf ~level:`info "  calls = [ ";
   IntPairSet.iter (fun (s,t) -> logf ~level:`info "(%d,%d) " s t) scc_call_edges;
   logf ~level:`info "]\n";
@@ -1194,8 +1314,8 @@ let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.sc
  *    expressions describing the recursive paths (r) which always call 
  *    back into the current SCC) and non-recursive paths n which never do.
  * *)
-let factor_pair pathexpr is_scc_call edge (alg:Pathexpr.t WeightedGraph.algebra) =
-(*let factor_pair pathexpr is_within_scc edge (alg:Pathexpr.t WeightedGraph.algebra) =*)
+let factor_pair pathexpr is_scc_call edge (alg:NPathexpr.t WeightedGraph.algebra) =
+(*let factor_pair pathexpr is_within_scc edge (alg:NPathexpr.t WeightedGraph.algebra) =*)
   let factor_alg = function
     | `Edge (s, t) -> if is_scc_call s t 
                       then (edge s t, alg.zero)
@@ -1211,12 +1331,13 @@ let factor_pair pathexpr is_scc_call edge (alg:Pathexpr.t WeightedGraph.algebra)
         alg.mul n1 n2)      (* nonrec *)
     | `Star (r,n) -> (*  Rec looks like (r+n)*r(r+n)* and non-rec is n* *)
        let mixed = alg.star (alg.add r n) in
-       (alg.mul (alg.mul mixed r) mixed,
-        alg.star n)
+       let nstar = alg.star n in
+       (alg.mul (alg.mul nstar r) mixed,
+        nstar)
     | `Zero -> (alg.zero, alg.zero)
     | `One -> (alg.zero, alg.one)
   in
-  eval factor_alg pathexpr
+  NPathexpr.eval factor_alg pathexpr
 
 let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =  
   let program_vars = 
@@ -1264,18 +1385,18 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
     let path_weight_internal src tgt weight_of_call = 
       let weight = edge_weight_with_calls weight_of_call in
       WeightedGraph.path_weight path_graph src tgt
-      |> eval (* ~table:query.table *) weight in
+      |> NPathexpr.eval (* ~table:query.table *) weight in
     logf ~level:`info "Processing a call-graph SCC:";
-    List.iter (fun (u,v,p) -> (logf ~level:`info "  Proc(%d,%d) = %t" u v (fun f -> Pathexpr.pp f p))) scc.procs;
+    List.iter (fun (u,v,p) -> (logf ~level:`info "  Proc(%d,%d) = %t" u v (fun f -> NPathexpr.pp f p))) scc.procs;
     let summaries = List.map (fun (p_entry,p_exit,pathexpr) ->
       let weight_of_call_zero cs ct cen cex = K.zero in
       let scc_call_edges = find_recursive_calls ts pathexpr scc in 
-      let edge s t = mk_edge context s t in
+      let edge s t = NPathexpr.mk_edge context s t in
       let pe_algebra = BURG.pathexp_algebra context in 
       let (rec_pe, nonrec_pe) = factor_pair pathexpr is_scc_call edge pe_algebra in
       (*let (rec_pe, nonrec_pe) = factor_pair pathexpr is_within_scc edge pe_algebra in*)
-      logf ~level:`info "    Rec part: %t" (fun f -> Pathexpr.pp f rec_pe);
-      logf ~level:`info "    Nonrec part: %t" (fun f -> Pathexpr.pp f nonrec_pe);
+      logf ~level:`info "    Rec part: %t" (fun f -> NPathexpr.pp f rec_pe);
+      logf ~level:`info "    Nonrec part: %t" (fun f -> NPathexpr.pp f nonrec_pe);
       if IntPairSet.cardinal scc_call_edges = 0 then
         (* Non-recursive SCC *)
         (p_entry,p_exit, project (path_weight_internal p_entry p_exit weight_of_call_zero))
@@ -1286,7 +1407,7 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       let (top_down_summary, ht_var_sym) = 
         make_top_down_summary p_entry path_weight_internal top scc_call_edges in
       let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in
-      (*let base_case_weight = project (eval (edge_weight_with_calls weight_of_call_zero) nonrec_pe) in*)
+      (*let base_case_weight = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_zero) nonrec_pe) in*)
       logf ~level:`info "  base_case = ["; print_indented 15 base_case_weight; logf ~level:`info "  ]";
       (* *)
       let bounds = mk_call_abstraction base_case_weight in 
@@ -1297,14 +1418,14 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       in
       (* WARNING: the following line isn't precise unless you take special action to
            remove the base case later... *)
-      let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
+      (*let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
       logf ~level:`info "  recursive_weight = [";
       print_indented 15 recursive_weight;
-      logf ~level:`info "  ]";
-      (*let recursive_weight_nobc = project (eval (edge_weight_with_calls weight_of_call_rec) rec_pe) in
+      logf ~level:`info "  ]";*)
+      let recursive_weight_nobc = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_rec) rec_pe) in
       logf ~level:`info "  recursive_weight-BC = [";
       print_indented 15 recursive_weight_nobc;
-      logf ~level:`info "  ]"; *)
+      logf ~level:`info "  ]"; 
       (* Note: this use of top is a hack; this top isn't really top; it's really
            havoc-all-program-vars; that is, it doesn't havoc the height variable H *)
       (* Make a formula from top_down_summary and get the post-state height symbol *)
@@ -1316,12 +1437,12 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       let post_height_sym = 
         try snd (List.find is_post_height top_down_symbols) 
         with Not_found -> failwith "CRA-Nonlinrec: Failed to find post-height symbol" in 
-      let height_based_summary = 
-          mk_height_based_summary bounds recursive_weight program_vars post_height_sym 
-          top_down_formula in
       (*let height_based_summary = 
-        mk_height_based_summary bounds recursive_weight_nobc top_down_summary ht_var_sym 
-          program_vars base_case_weight top in*)
+          mk_height_based_summary bounds recursive_weight program_vars post_height_sym 
+          top_down_formula in*)
+      let height_based_summary = 
+          mk_height_based_summary recursive_weight_nobc bounds program_vars post_height_sym 
+          top_down_formula in
       (p_entry,p_exit,height_based_summary)) scc.procs in 
     let one_summary = List.hd summaries in 
     [one_summary] in
