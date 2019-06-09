@@ -386,7 +386,7 @@ let of_transition_formula tr_symbols fmla =
 
 type 'a bound_info = {
   bound_pairs : (Srk.Syntax.symbol * 'a Srk.Syntax.term) list;
-  recursion_flag : Cra.value;
+  (*recursion_flag : Cra.value;*)
   call_abstraction : K.t
 }
 
@@ -452,7 +452,7 @@ let mk_call_abstraction base_case_weight =
   let call_abstraction_fmla = Srk.Syntax.mk_and Cra.srk (!bounding_atoms) in 
   let call_abstraction_weight = of_transition_formula tr_symbols call_abstraction_fmla in 
     {bound_pairs = !bound_list;
-     recursion_flag = rec_flag_val; 
+     (*recursion_flag = rec_flag_val; *)
      call_abstraction = K.mul set_rec_flag call_abstraction_weight}
 
 type 'a recurrence_collection = {
@@ -583,20 +583,14 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
     new_coeffs_and_dims in 
   blk_add_entry;;
 
+let is_negative q = ((QQ.compare q QQ.zero) < 0) 
+let is_non_negative q = ((QQ.compare q QQ.zero) >= 0)
+(*let is_at_least_one q = ((QQ.compare q QQ.one) >= 0)*)
+let have_recurrence sym recurrences = 
+  Srk.Syntax.Symbol.Map.mem sym recurrences.done_symbols
+
 let mk_height_based_summary 
-  bounds recursive_weight_nobc top_down_summary ht_var_sym program_vars base top =  
-  (* FIXME add a base case to the top_down? *)
-  (* Note: this use of top is a hack; this top isn't really top; it's really
-       havoc-all-program-vars; that is, it doesn't havoc the height variable H *)
-  (* Make a formula from top_down_summary and get the post-state height symbol *)
-  let top_down_symbols, top_down_formula = 
-    K.to_transition_formula (K.mul (K.mul top_down_summary base) top) in
-  logf ~level:`info "@.  tdf: %a" 
-      (Srk.Syntax.Formula.pp Cra.srk) top_down_formula; 
-  let is_post_height (pre_sym,post_sym) = (pre_sym == ht_var_sym) in 
-  let post_height_sym = 
-    try snd (List.find is_post_height top_down_symbols) 
-    with Not_found -> failwith "CRA-Nonlinrec: Failed to find post-height symbol" in 
+    bounds recursive_weight_nobc program_vars post_height_sym top_down_formula =  
   (* REMOVE BASE CASE *)
   (*let initially_no_recursion = (assign_value_to_literal bounds.recursion_flag 0) in 
   let eventually_recursion = (assume_value_eq_literal bounds.recursion_flag 1) in 
@@ -606,7 +600,7 @@ let mk_height_based_summary
   let (tr_symbols, body) = to_transition_formula recursive_weight_nobc in
   logf ~level:`info "  transition_formula_body: @.%a@." (Srk.Syntax.Formula.pp Cra.srk) body;
   let b_out_definitions = ref [] in 
-  let b_in_b_out_pairs = ref [] in 
+  (*let b_in_b_out_pairs = ref [] in *)
   let b_in_b_out_map = ref Srk.Syntax.Symbol.Map.empty in 
   let b_in_symbols = ref Srk.Syntax.Symbol.Set.empty in 
   let b_out_symbols = ref Srk.Syntax.Symbol.Set.empty in 
@@ -621,7 +615,7 @@ let mk_height_based_summary
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym);
     b_out_definitions := b_out_constraint :: (!b_out_definitions);
-    b_in_b_out_pairs := (inner_sym, outer_sym) :: (!b_in_b_out_pairs);
+    (*b_in_b_out_pairs := (inner_sym, outer_sym) :: (!b_in_b_out_pairs);*)
     b_in_b_out_map := Srk.Syntax.Symbol.Map.add inner_sym outer_sym !b_in_b_out_map;
     b_in_symbols  := Srk.Syntax.Symbol.Set.add inner_sym (!b_in_symbols);
     b_out_symbols := Srk.Syntax.Symbol.Set.add outer_sym (!b_out_symbols) in 
@@ -637,6 +631,8 @@ let mk_height_based_summary
   let wedge = Wedge.abstract ~exists:projection Cra.srk full_conjunction in 
   logf ~level:`info "  extraction_wedge = @.%t@." (fun f -> Wedge.pp f wedge); 
   (* *)
+  (* *********************************************************************** *)
+  (* ********               Recurrence Extraction                   ******** *)
   let recurrence_candidates = ref [] in
   (*let best_self_coefficient = ref Srk.Syntax.Symbol.Map.empty in *)
   (* 
@@ -663,11 +659,6 @@ let mk_height_based_summary
       bounds.bound_pairs in 
   logf ~level:`trace "  Finished wedge map."; 
   (* *)
-  let is_negative q = ((QQ.compare q QQ.zero) < 0) in
-  let is_non_negative q = ((QQ.compare q QQ.zero) >= 0) in
-  (*let is_at_least_one q = ((QQ.compare q QQ.one) >= 0) in*)
-  let have_recurrence sym recurrences = 
-    Srk.Syntax.Symbol.Map.mem sym recurrences.done_symbols in
   (* There's a need for an outer loop for stratification levels, although we 
     should avoid redoing the expensive steps.  *)
   (* *)
@@ -679,7 +670,6 @@ let mk_height_based_summary
   let rec extract_recurrences recurrences allow_interdependence = 
     begin
     let nb_previous_recurrences = count_recurrences recurrences in 
-    (* Change this to iterate over b_in_symbols, maybe? *)
     (* *) 
     (* This function is applied to each B_in symbol *) 
     let extract_recurrence_for_symbol (target_inner_sym, _) = 
@@ -842,18 +832,7 @@ let mk_height_based_summary
             (not (Srk.Syntax.Symbol.Set.mem recur.inner_sym !earlier_candidates)) in
           earlier_candidates := 
             Srk.Syntax.Symbol.Set.add recur.inner_sym !earlier_candidates; 
-          result 
-          in 
-          (*
-          List.fold_left (fun ok dep -> let result = ok && 
-              (not (Srk.Syntax.Symbol.Set.mem recur.inner_sym !earlier_candidates)) 
-              in 
-              earlier_candidates := 
-                Srk.Syntax.Symbol.Set.add recur.inner_sym !earlier_candidates; 
-              result) 
-            true 
-            recur.dependencies in 
-          *)
+          result in 
         recurrence_candidates := 
             List.filter drop_redundant_recs !recurrence_candidates;
         let symbols_of_candidates = 
@@ -923,15 +902,13 @@ let mk_height_based_summary
     end 
     in 
   let recurrences = empty_recurrence_collection () in 
+  (* Here is the actual call to the recurrence extraction code *)
   let recurrences = extract_recurrences recurrences false in 
+  (* Here recurrence extraction is complete *)
   (* *)
-  (*let term_of_id = Array.of_list (List.rev recurrences.rev_term_of_id) in *)
+  (* *********************************************************************** *)
+  (* ********             Sanity-checks of recurrences              ******** *)
   let term_of_id = BatDynArray.to_array recurrences.term_of_id in 
-  let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
-  let nb_constants = (* just inserting a test print *)
-          0 (*(logf ~level:`info "      got here@."; 0)*)
-  in
-  (* Sanity check sizes... *)
   (if not ((List.length recurrences.blk_transforms) ==
            (List.length recurrences.blk_adds)) then
      failwith "Matrix recurrence transform/add blocks mismatched.");
@@ -951,10 +928,15 @@ let mk_height_based_summary
     in
   List.iter2 check_block_sizes recurrences.blk_transforms recurrences.blk_adds;
   (* *)
+  (* *********************************************************************** *)
+  (* ********               Recurrence Solving                      ******** *)
+  (* *)
   (* Change to pairs of transform_add blocks *)
   (* Add the appropriate constraint to the loop counter, so K >= 0 *)
   (* Send the matrix recurrence to OCRS and obtain a solution *)
   logf ~level:`trace "@.    Sending to OCRS ";
+  let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
+  let nb_constants = 0 in
   let solution = SolvablePolynomial.exp_ocrs_external 
                   Cra.srk recurrences.ineq_tr loop_counter term_of_id 
                   nb_constants recurrences.blk_transforms 
@@ -962,6 +944,8 @@ let mk_height_based_summary
   logf ~level:`info "@.    solution: %a" 
       (Srk.Syntax.Formula.pp Cra.srk) solution;
   (* *)
+  (* *********************************************************************** *)
+  (* ********      Building summaries using recurrence solution     ******** *)
   let subst_b_in_with_zeros sym = 
     if Srk.Syntax.Symbol.Set.mem sym !b_in_symbols 
     then Srk.Syntax.mk_real Cra.srk QQ.zero 
@@ -1289,18 +1273,17 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
         (* Non-recursive SCC *)
         (p_entry,p_exit, project (path_weight_internal p_entry p_exit weight_of_call_zero))
       else 
+      (* TODO Better handle the footprints of weights, rather than using top.
+       * Should take a pass over all edge weights to union their footprints.
+       * With max, I could allow extraction to use known constants in extraction. *)
       let (top_down_summary, ht_var_sym) = 
         make_top_down_summary p_entry path_weight_internal top scc_call_edges in
       (*let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in*)
       let base_case_weight = eval (edge_weight_with_calls weight_of_call_zero) nonrec_pe in
-      logf ~level:`info "  base_case = [";
-      print_indented 15 base_case_weight;
-      logf ~level:`info "  ]";
+      logf ~level:`info "  base_case = ["; print_indented 15 base_case_weight; logf ~level:`info "  ]";
       (* *)
       let bounds = mk_call_abstraction base_case_weight in 
-      logf ~level:`info "  call_abstration = [";
-      print_indented 15 bounds.call_abstraction;
-      logf ~level:`info "  ]";
+      logf ~level:`info "  call_abstration = ["; print_indented 15 bounds.call_abstraction; logf ~level:`info "  ]";
       let weight_of_call_rec cs ct cen cex = 
         if cen == p_entry && cex == p_exit then bounds.call_abstraction
         else failwith "Mutual recursion not implemented"
@@ -1315,9 +1298,23 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       logf ~level:`info "  recursive_weight-BC = [";
       print_indented 15 recursive_weight_nobc;
       logf ~level:`info "  ]"; 
+      (* Note: this use of top is a hack; this top isn't really top; it's really
+           havoc-all-program-vars; that is, it doesn't havoc the height variable H *)
+      (* Make a formula from top_down_summary and get the post-state height symbol *)
+      let top_down_symbols, top_down_formula = 
+        K.to_transition_formula (K.mul (K.mul top_down_summary base_case_weight) top) in
+      logf ~level:`info "@.  tdf: %a" 
+          (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
+      let is_post_height (pre_sym,post_sym) = (pre_sym == ht_var_sym) in 
+      let post_height_sym = 
+        try snd (List.find is_post_height top_down_symbols) 
+        with Not_found -> failwith "CRA-Nonlinrec: Failed to find post-height symbol" in 
       let height_based_summary = 
+          mk_height_based_summary bounds recursive_weight_nobc program_vars post_height_sym 
+          top_down_formula in
+      (*let height_based_summary = 
         mk_height_based_summary bounds recursive_weight_nobc top_down_summary ht_var_sym 
-          program_vars base_case_weight top in
+          program_vars base_case_weight top in*)
       (p_entry,p_exit,height_based_summary)) scc.procs in 
     let one_summary = List.hd summaries in 
     [one_summary] in
