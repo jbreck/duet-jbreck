@@ -888,7 +888,7 @@ let mk_height_based_summary
   (*let b_in_b_out_pairs = ref [] in *)
   let b_in_b_out_map = ref Srk.Syntax.Symbol.Map.empty in 
   let b_in_symbols = ref Srk.Syntax.Symbol.Set.empty in 
-  let b_out_symbols = ref Srk.Syntax.Symbol.Set.empty in 
+  let b_out_symbols = ref Srk.Syntax.Symbol.Set.empty in
   let add_b_out_definition (inner_sym, term) =
     let outer_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"B_out" `TyInt in
     let lhs = Srk.Syntax.mk_const Cra.srk outer_sym in 
@@ -904,12 +904,21 @@ let mk_height_based_summary
     b_in_b_out_map := Srk.Syntax.Symbol.Map.add inner_sym outer_sym !b_in_b_out_map;
     b_in_symbols  := Srk.Syntax.Symbol.Set.add inner_sym (!b_in_symbols);
     b_out_symbols := Srk.Syntax.Symbol.Set.add outer_sym (!b_out_symbols) in 
-  logf ~level:`info "[Chora] Finding bounded terms:";
+  logf ~level:`info "[Chora] Listing bounded terms:";
   List.iter add_b_out_definition bounds.bound_pairs; 
-  logf ~level:`trace "        Finished bounded terms.";
+  logf ~level:`trace "        Finished with bounded terms.";
+  (* *)
+  let non_negative_b_in (inner_sym, _) = 
+    let lhs = Srk.Syntax.mk_real Cra.srk QQ.zero in 
+    let rhs = Srk.Syntax.mk_const Cra.srk inner_sym in 
+    Srk.Syntax.mk_leq Cra.srk lhs rhs in
+  let all_b_in_non_negative = List.map non_negative_b_in bounds.bound_pairs in 
+  let b_in_conjunction = Srk.Syntax.mk_and Cra.srk all_b_in_non_negative in 
+  (* *)
   let b_out_conjunction = Srk.Syntax.mk_and Cra.srk (!b_out_definitions) in 
   (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
-  let full_conjunction = Srk.Syntax.mk_and Cra.srk [body; b_out_conjunction] in 
+  (*let full_conjunction = Srk.Syntax.mk_and Cra.srk [body; b_out_conjunction] in*)
+  let full_conjunction = Srk.Syntax.mk_and Cra.srk [b_in_conjunction; body; b_out_conjunction] in 
   let projection sym = 
     Srk.Syntax.Symbol.Set.mem sym !b_in_symbols || 
     Srk.Syntax.Symbol.Set.mem sym !b_out_symbols in 
@@ -1286,7 +1295,7 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
         if cen == p_entry && cex == p_exit then bounds.call_abstraction
         else failwith "Mutual recursion not implemented"
       in
-      (* WARNING: the following line isn't safe to use unless you take special action to
+      (* WARNING: the following line isn't precise unless you take special action to
            remove the base case later... *)
       let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
       logf ~level:`info "  recursive_weight = [";
