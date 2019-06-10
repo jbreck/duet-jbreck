@@ -825,7 +825,7 @@ let extract_periodic_rational_matrix_eq srk wedge tr_symbols term_of_id =
 
 (* Extract recurrences of the form t' <= base * t + p, where p is a
    polynomial over recurrence terms *)
-let extract_vector_leq srk wedge tr_symbols term_of_id base =
+let extract_vector_leq srk wedge tr_symbols term_of_id base nb_eqs =
   (* For each transition symbol (x,x'), allocate a symbol delta_x,
      which is constrained to be equal to x'-base*x.  For each recurrence
      term t, allocate a symbol add_t, which is constrained to be equal
@@ -844,12 +844,22 @@ let extract_vector_leq srk wedge tr_symbols term_of_id base =
         mk_symbol srk ~name typ)
       tr_symbols
   in
+  (*
   let add =
     DArray.map (fun t ->
         let name = "a[" ^ (Term.show srk t) ^ "]" in
         mk_symbol srk ~name (term_typ srk t :> typ))
       term_of_id
   in
+  *)
+  let add = DArray.create () in
+  BatEnum.iter
+    (fun i ->
+      let t = DArray.get term_of_id i in
+      let name = "a[" ^ (Term.show srk t) ^ "]" in
+      let add_sym = mk_symbol srk ~name (term_typ srk t :> typ) in
+      DArray.add add add_sym )
+    (0 -- (nb_eqs - 1));
   let delta_map =
     List.fold_left2 (fun map delta (s,s') ->
         Symbol.Map.add delta (mk_const srk s) map)
@@ -950,17 +960,18 @@ let extract_vector_leq srk wedge tr_symbols term_of_id base =
   List.rev (!recurrences)
 
 let extract_vector_leq_multibase srk wedge tr_symbols term_of_id =
+  let nb_eqs = DArray.length term_of_id in
   let bases = guess_divisors_from_wedge wedge srk in 
   let nonunit = 
   IntPairSet.fold (fun (n,d) blocks ->
     if d == 1 then [] else 
     List.append blocks
       (extract_vector_leq srk wedge tr_symbols term_of_id 
-        (QQ.of_frac n d))) bases []
+        (QQ.of_frac n d) nb_eqs)) bases  []
   in 
   List.append
     nonunit
-    (extract_vector_leq srk wedge tr_symbols term_of_id QQ.one)
+    (extract_vector_leq srk wedge tr_symbols term_of_id QQ.one nb_eqs)
   ;;
 
 (* Extract a system of recurrencs of the form Ax' <= BAx + b, where B
