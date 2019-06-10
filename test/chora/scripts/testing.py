@@ -195,6 +195,7 @@ def run(batch, stamp) :
     outroot = choraconfig.testroot + "/output"
     outrun = outroot + "/" + stamp
     runlogpath = outrun + "/run.dat"
+    donefile = outrun + "/run_complete.txt"
     outsources = outrun + "/sources/"
     choraconfig.makedirs(outsources)
     formatting = []
@@ -319,7 +320,9 @@ def run(batch, stamp) :
 
     newstamp = datetime.datetime.now().strftime("%Y/%m/%d at %H:%M:%S")
     print ""
-    print "Run ID=" + stamp + " completed at " + newstamp
+    completion = "Run ID=" + stamp + " completed at " + newstamp
+    print completion
+    with open(donefile,"wb") as done : print >>done, completion
 
     format_run(outrun)
 
@@ -490,7 +493,7 @@ if __name__ == "__main__" :
         usage()
     if sys.argv[1] == "--run" : 
         batchid = sys.argv[2]
-        stamp = datetime.datetime.now().strftime("%Y_%m_%d_at_%H_%M_%S")
+        stamp = datetime.datetime.now().strftime("%Y_%m_%d_at_%H_%M_%S") + "_" + batchid
         for arg in sys.argv :
             matches = re.match("--stamp=(.*)",arg)
             if matches :
