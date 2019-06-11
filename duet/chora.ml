@@ -1363,6 +1363,7 @@ let resource_bound_analysis rg query =
           Format.printf "---- Bounds on the cost of %a@." Varinfo.pp procedure;
           if K.mem_transform cost summary then begin
             (*logf ~level:`always "Procedure: %a" Varinfo.pp procedure;*)
+            (* Option 1, original version *)
             (* replace cost with 0, add constraint cost = rhs *)
             let guard =
               let subst x =
@@ -1377,22 +1378,75 @@ let resource_bound_analysis rg query =
               Ctx.mk_and [Syntax.substitute_const Cra.srk subst (K.guard summary);
                           Ctx.mk_eq (Ctx.mk_const cost_symbol) rhs ]
             in
+            (* Option 2 *)
+            (* Same as above, but now avoid setting pre-state cost to zero *)
+            (*let guard =
+              let rhs = K.get_transform cost summary
+              in
+              Ctx.mk_and [K.guard summary; Ctx.mk_eq (Ctx.mk_const cost_symbol) rhs ]
+            in*)
+            (* Option 3, the version from ICRA's code *)
+            (*let guard =
+              let rhs =
+                if K.mem_transform cost summary then
+                  K.get_transform cost summary
+                else
+                  Ctx.mk_const (Cra.V.symbol_of cost)
+              in
+              Ctx.mk_and [K.guard summary;
+                          Ctx.mk_eq (Ctx.mk_const cost_symbol) rhs ]
+            in*)
+            let func = (* added by Jason *)
+              let vertex = (RG.block_entry rg procedure).did in 
+              let name_varinfo = 
+                (Interproc.RG.vertices rg)
+                |> BatEnum.find (fun (block, v) -> vertex = v.did)
+                |> fst in
+              let open CfgIr in let file = get_gfile() in
+              List.find (fun f -> f.fname = name_varinfo) file.funcs;
+            in
+            let param_map =
+              BatList.fold_lefti (fun map i formal ->
+                  let param = PointerAnalysis.get_param i in
+                  let pval = Cra.V.symbol_of (VVal param) in
+                  let pwidth = Cra.V.symbol_of (VWidth param) in
+                  let ppos = Cra.V.symbol_of (VWidth param) in
+                  let fval = Ctx.mk_const (Cra.V.symbol_of (VVal (Core.Var.mk formal))) in
+                  let fwidth = Ctx.mk_const (Cra.V.symbol_of (VWidth (Core.Var.mk formal))) in
+                  let fpos = Ctx.mk_const (Cra.V.symbol_of (VPos (Core.Var.mk formal))) in
+                  map
+                  |> Srk.Syntax.Symbol.Map.add pval fval
+                  |> Srk.Syntax.Symbol.Map.add pwidth fwidth
+                  |> Srk.Syntax.Symbol.Map.add ppos fpos)
+                Srk.Syntax.Symbol.Map.empty
+                func.CfgIr.formals
+            in
+            let pre_cost_zero =
+              let cost_symbol = Cra.V.symbol_of cost in
+              Syntax.substitute_const Cra.srk (fun sym ->
+                  if sym = cost_symbol then
+                    Ctx.mk_real QQ.zero
+                  else
+                    Ctx.mk_const sym)
+            in
             match Wedge.symbolic_bounds_formula ~exists Cra.srk guard cost_symbol with
             | `Sat (lower, upper) ->
               begin match lower with
                 | Some lower ->
-                  logf ~level:`always " %a <= cost" (Syntax.Term.pp Cra.srk) lower;
+                  let lower = Syntax.substitute_map Cra.srk param_map lower in
+                  logf ~level:`always " %a <= cost" (Syntax.pp_expr_unnumbered Cra.srk) lower;
                   logf ~level:`always " %a is o(%a)"
                     Varinfo.pp procedure
-                    BigO.pp (BigO.of_term Cra.srk lower)
+                    BigO.pp (BigO.of_term Cra.srk (pre_cost_zero lower))
                 | None -> ()
               end;
               begin match upper with
                 | Some upper ->
-                  logf ~level:`always " cost <= %a" (Syntax.Term.pp Cra.srk) upper;
+                  let upper = Syntax.substitute_map Cra.srk param_map upper in
+                  logf ~level:`always " cost <= %a" (Syntax.pp_expr_unnumbered Cra.srk) upper;
                   logf ~level:`always " %a is O(%a)"
                   Varinfo.pp procedure
-                  BigO.pp (BigO.of_term Cra.srk upper)
+                  BigO.pp (BigO.of_term Cra.srk (pre_cost_zero upper))
                 | None -> ()
               end
             | `Unsat ->
