@@ -1217,7 +1217,7 @@ let make_height_based_summaries
 ;;
  
 let make_top_down_weight_multi 
-    procs top (ts : Cra.K.t Cra.label Cra.WG.t) is_scc_call lower_summaries =
+    procs top (ts : Cra.K.t Cra.label Cra.WG.t) is_scc_call lower_summaries base_case_map =
   (* Note: this height variable really represents depth *)
   let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
   let height_var_val = Cra.VVal height_var in 
@@ -1242,18 +1242,20 @@ let make_top_down_weight_multi
                 top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight increment_height) en;
                 top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight (project top)) t
               end
-            | Weight w ->
-              (* Regular (non-call) edge *)
+            | Weight w -> (* Regular (non-call) edge *)
               top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight w) t
           end
         | _ -> () (* Add, Mul, Star, etc. *) in
-      NPathexpr.eval add_edges_alg pathexpr) procs; (* FIXME use eval table here for more speed *)
+      NPathexpr.eval add_edges_alg pathexpr) procs;
   dummy_exit_node := !dummy_exit_node - 1; (* Minimum vertex number minus one *)
-  List.iter (fun (p_entry,p_exit,pathexpr) -> (* Add an edge from each proc exit to dummy_exit_node *)
+  List.iter (fun (p_entry,p_exit,_) ->
       (* Note: this use of top is a hack; this top isn't really top; it's really
            havoc-all-program-vars.  For one thing, it doesn't havoc the height variable H,
            which is good, because that's the main thing we want to get out of this analysis. *)
-      top_graph := Srk.WeightedGraph.add_edge !top_graph p_exit (Weight top) !dummy_exit_node) procs;
+      let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
+      let weight = K.mul base_case_weight top in
+      top_graph := Srk.WeightedGraph.add_edge !top_graph p_entry (Weight weight) !dummy_exit_node)
+    procs;
   let post_height_sym_ref = ref None in 
   let td_formula_map = (List.fold_left (fun td_formula_map (p_entry,p_exit,pathexpr) ->
       match WeightedGraph.path_weight !top_graph p_entry !dummy_exit_node with
@@ -1289,11 +1291,16 @@ let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges
     K.add running_total fragment_weight
     ) scc_call_edges K.zero in
   logf ~level:`info "  ]";
-  let phi_td = K.mul set_height_zero (K.star (K.mul increment_height sum_of_fragments)) in
+  let top_down_summary = K.mul set_height_zero (K.star (K.mul increment_height sum_of_fragments)) in
   logf ~level:`info "  phi_td = [";
-  print_indented 15 phi_td;
+  print_indented 15 top_down_summary;
   logf ~level:`info "  ]\n";
-  phi_td, height_var_sym;;
+  let top_down_symbols, top_down_formula = to_transition_formula top_down_summary in  
+  logf ~level:`info "@.  tdf: %a"
+      (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
+  let is_post_height (pre_sym,post_sym) = (pre_sym == height_var_sym) in 
+  let post_height_sym = snd (List.find is_post_height top_down_symbols) in
+  top_down_formula, post_height_sym;;
 
 let get_procedure_summary query rg procedure = 
   let entry = (RG.block_entry rg procedure).did in
@@ -1559,12 +1566,6 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
         scc.procs in 
 
 
-      logf ~level:`info "  Beginning top-down analysis"; 
-      (*   ***   Compute top-down summaries for each procedure   ***   *)
-      let (top_down_formula_map, post_height_sym) = 
-        make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries in
-      logf ~level:`info "  Finished top-down analysis"; 
-
       (*   ***   Compute the weights of the base case of each procedure  ***   *)
       let base_case_map = List.fold_left (fun bc_map (p_entry,p_exit,pathexpr) ->
           let (rec_pe,nonrec_pe) = IntPairMap.find (p_entry,p_exit) split_expr_map in
@@ -1575,6 +1576,12 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
           IntPairMap.add (p_entry,p_exit) base_case_weight bc_map)
         IntPairMap.empty 
         scc.procs in 
+
+      logf ~level:`info "  Beginning top-down analysis"; 
+      (*   ***   Compute top-down summaries for each procedure   ***   *)
+      let (top_down_formula_map, post_height_sym) = 
+        make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries base_case_map in
+      logf ~level:`info "  Finished top-down analysis"; 
 
       (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
       let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
