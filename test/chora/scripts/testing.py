@@ -142,7 +142,7 @@ class HTMLTable :
         self.columns = list()
         self.rows = list()
         self.data = dict()
-        self.style = "border='1px' style='width:100%;table-layout:fixed;'"
+        self.style = "border='1px'" 
         self.prefix = ""
         self.column_weights = dict()
         self.flags = list()
@@ -178,6 +178,8 @@ class HTMLTable :
         if colid not in self.data[rowid] : self.data[rowid][colid] = ""
         return self.data[rowid][colid]
     def show(self, formatting) :
+        if check_formatting_flag("col_width_proportional",formatting) : 
+            self.style += " style='width:100%;table-layout:fixed;' "
         output = "<table " + self.style + " >\n"
         output += self.prefix
         if check_formatting_flag("col_width_proportional",formatting) : 
@@ -372,7 +374,7 @@ def format_run(outrun) :
         print "Unrecognized formatting style requested: " + formatting["style"]
     if formatting["style"] in ["rba","assert"] :
         with open(htmlpath,"wb") as html :
-            print >>html, "<html><body>"
+            print >>html, "<html>\n<body>"
 
             datfile = Datfile(outrun+"/run.dat")
 
