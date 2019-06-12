@@ -142,13 +142,21 @@ class HTMLTable :
         self.columns = list()
         self.rows = list()
         self.data = dict()
-        self.style = "border='1px'"
+        self.style = "border='1px' style='width:100%;table-layout:fixed;'"
         self.prefix = ""
+        self.column_weights = dict()
+        self.flags = list()
     def register_row(self,rowid) :
         if rowid not in self.rows : self.rows.append(rowid)
     def register_column(self,colid) :
         if colid not in self.columns : self.columns.append(colid)
+        if colid not in self.column_weights : self.column_weights[colid] = 1.0
+    def set_column_weight(self,colid,weight) :
+        self.column_weights[colid] = weight
     def set_prefix(self, prefix) : self.prefix = prefix
+    def set_flag(self, flag) : 
+        if not flag in self.flags : self.flags.append(flag)
+    def flag(self, flag) : return flag in self.flags
     def new_row(self) : 
         rowid = "row"+str(len(self.rows))
         self.register_row(rowid)
@@ -172,6 +180,16 @@ class HTMLTable :
     def show(self, formatting) :
         output = "<table " + self.style + " >\n"
         output += self.prefix
+        if check_formatting_flag("col_width_proportional",formatting) : 
+            if not "colgroup" in self.prefix :
+                total_weight = sum([self.column_weights[C] for C in self.columns])
+                pct = dict()
+                for col in reversed(self.columns[1:]) :
+                    pct[col] = int(100 * self.column_weights[col] / total_weight)
+                if len(self.columns) > 0 : pct[self.columns[0]] = 100 - sum(pct[C] for C in pct)
+                for col in self.columns :
+                    output += """<col span="1" style="width:%d%%;">""" % pct[col]
+                output += """\n"""
         rows = self.rows
         columns = self.columns
         bgIndex = 0
@@ -392,8 +410,7 @@ def format_run(outrun) :
                 #    tools.append(Tool({"ID":toolID}))
 
             table = HTMLTable()
-            table.prefix = """<colgroup> <col span="1" style="width:600px;"> </colgroup>\n"""
-
+            #table.prefix = """<colgroup> <col span="1" style="width:600px;"> </colgroup>\n"""
             if formatting["style"] == "rba" :
                 # register rows and columns
                 table.register_row("head")
@@ -403,6 +420,10 @@ def format_run(outrun) :
                 for tool in tools : 
                     table.register_column("tooltime/"+tool.ID)
                     table.register_column("toolrba/"+tool.ID)
+                table.set_column_weight("benchmark",3.0)
+                for tool in tools : 
+                    table.set_column_weight("tooltime/"+tool.ID,1.0)
+                    table.set_column_weight("toolrba/"+tool.ID,4.0)
 
                 # fill in table
                 table.set("head","benchmark","Benchmark")
@@ -422,7 +443,7 @@ def format_run(outrun) :
                         if not os.path.exists(logpath) : continue
                         loglinks.append("<a href='logs/" + logrel + "'>[" + tool.ID + "]</a>")
                         if tool.hasattr("bounds_callout") : 
-                            bc_result = ("<pre>"
+                            bc_result = ("<pre style='white-space:pre-wrap;'>"
                                         +xml.sax.saxutils.escape(
                                           tool.get("bounds_callout")
                                                   ({"logpath":logpath}))
@@ -445,6 +466,10 @@ def format_run(outrun) :
                 for tool in tools : 
                     table.register_column("tooltime/"+tool.ID)
                     table.register_column("toolassert/"+tool.ID)
+                table.set_column_weight("benchmark",4.0)
+                for tool in tools : 
+                    table.set_column_weight("tooltime/"+tool.ID,1.0)
+                    table.set_column_weight("toolassert/"+tool.ID,1.0)
 
                 # fill in table
                 table.set("head","benchmark","Benchmark")
