@@ -476,6 +476,7 @@ end)
 let chora_print_summaries = ref false
 let chora_print_wedges = ref false
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
+let chora_fallback = ref false
 
 type val_sym = { 
     value: Cra.value; 
@@ -929,26 +930,26 @@ let build_dual_height_summary
   log_fmla_proc "@.    bd_bridge conj%t: %a" p_entry p_exit bound_bridge;
   let first_part = [rb_topdown;rm_topdown;height_eq;height_ineq] in
   let last_part = [mb_solution;bound_bridge;rm_solution;bound_upper] in
-  (* let fallback = [] in *) (* uncomment this if you comment out fallback *) 
   (* ===== Optional "Fallback" to height-based analysis ===== *)
-  (* This can be commented out to simplify DHA, removing HBA fallback *)
   (* F9(optional) bound_rb: each prog. var. term <= each b_out_rb *)
-  let bound_rb = 
-    let make_bounding_conjuncts (in_sym,term) =
-      let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
-      Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym) in
-    let bounding_conjuncts = 
-      List.map make_bounding_conjuncts bounds.bound_pairs in 
-    Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
-  let bound_rb = rb_some_symbols bound_rb excepting in 
-  log_fmla_proc "@.    bd_rb conj%t: %a" p_entry p_exit bound_rb;
-  (* F10(optional) rb solution relating rb, b_in_rb, b_out_rb with b_in_rb=0 *)
-  let rb_solution = substitute_one_sym 
-    original_mb_solution (post_symbol mb.symbol) (post_symbol rb.symbol) in
-  let rb_solution = rename_b_in_to_zero b_in_b_out_map rb_solution in 
-  let rb_solution = rb_some_symbols rb_solution excepting in
-  log_fmla_proc "@.    rb_simplified%t: %a" p_entry p_exit rb_solution;
-  let fallback = [bound_rb;rb_solution] in 
+  let fallback = if !chora_fallback then begin
+    let bound_rb = 
+      let make_bounding_conjuncts (in_sym,term) =
+        let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
+        Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym) in
+      let bounding_conjuncts = 
+        List.map make_bounding_conjuncts bounds.bound_pairs in 
+      Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
+    let bound_rb = rb_some_symbols bound_rb excepting in 
+    log_fmla_proc "@.    bd_rb conj%t: %a" p_entry p_exit bound_rb;
+    (* F10(optional) rb solution relating rb, b_in_rb, b_out_rb with b_in_rb=0 *)
+    let rb_solution = substitute_one_sym 
+      original_mb_solution (post_symbol mb.symbol) (post_symbol rb.symbol) in
+    let rb_solution = rename_b_in_to_zero b_in_b_out_map rb_solution in 
+    let rb_solution = rb_some_symbols rb_solution excepting in
+    log_fmla_proc "@.    rb_simplified%t: %a" p_entry p_exit rb_solution;
+    [bound_rb;rb_solution]
+  end else [] in 
   (* ==============  End of Fallback section   ============== *)
   (* big_conjunction *)
   let big_conjunction = Srk.Syntax.mk_and Cra.srk 
@@ -1923,7 +1924,11 @@ let _ =
   CmdLine.register_config
     ("-chora-dual",
      Arg.Set chora_dual,
-     " Compute non-trivial lower bounds in addition to upper bounds ") (* "dual-height" analysis *)
+     " Compute non-trivial lower bounds in addition to upper bounds"); (* "dual-height" analysis *)
+  CmdLine.register_config
+    ("-chora-full",
+     Arg.Unit (fun () -> chora_dual := true; chora_fallback := true),
+     " Include a 'fallback' to height-based analysis in chora dual analysis")
 
 (* 
   Format.printf "wedge: @.  %t @.@." (fun f -> Wedge.pp f wedge);
