@@ -28,8 +28,13 @@ def chora_bounds_callout(params) :
     with open(params["logpath"],"rb") as logfile :
         mode = 0
         for line in logfile :
+            if mode == 2 :
+                if line.startswith("----") or line.startswith("===="):
+                    mode = 0
+                else :
+                    output += line
             if mode == 0 : 
-                if line.startswith("---- Bounds on"):
+                if line.startswith("---- Bounds on") or "has zero cost" in line:
                     output += line
                     #mode = 1
                     mode = 2 
@@ -38,11 +43,6 @@ def chora_bounds_callout(params) :
             #    if line.startswith("Procedure: "):
             #        mode = 2
             #        continue
-            if mode == 2 :
-                if line.startswith("-----"):
-                    mode = 0
-                    continue
-                output += line
     return output
 
 tool = choraconfig.get_default_tool_dict() 

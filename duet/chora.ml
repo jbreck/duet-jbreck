@@ -498,12 +498,13 @@ let make_variable name =
 
 (* ugly: copied from newtonDomain just for debugging *)
 let print_indented ?(level=`info) indent k =
-      logf ~level:level "%s"
-      (SrkUtil.mk_show (fun formatter tr ->
-          Format.pp_open_vbox formatter indent;
-          Format.pp_print_break formatter 0 0;
-          Format.fprintf formatter "%a" K.pp tr;
-          Format.pp_close_box formatter ()) k)
+      logf ~level:level "%a"
+      (fun f () -> Format.printf "%s"
+          (SrkUtil.mk_show (fun formatter tr ->
+              Format.pp_open_vbox formatter indent;
+              Format.pp_print_break formatter 0 0;
+              Format.fprintf formatter "%a" K.pp tr;
+              Format.pp_close_box formatter ()) k)) ()
 
 let post_symbol =
   Memo.memo (fun sym ->
@@ -550,6 +551,19 @@ let of_transition_formula tr_symbols fmla =
         tr_symbols
     in
     K.construct fmla transform
+
+let debug_print_wedge_of_transition tr = 
+  let level = if !chora_print_wedges then `always else `info in
+  let (tr_symbols, body) = to_transition_formula tr in
+  let projection x = 
+    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
+    || 
+    match Cra.V.of_symbol x with 
+    | Some v -> Cra.V.is_global v
+    | None -> false (* false *)
+  in 
+  logf ~level:level "  %t@." 
+    (fun f -> Wedge.pp f (Wedge.abstract ~exists:projection Cra.srk body))
 
 type 'a bound_info = {
   bound_pairs : (Srk.Syntax.symbol * 'a Srk.Syntax.term) list;
@@ -1423,6 +1437,9 @@ let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t)
         let td_summary = K.mul set_height_zero cycles in
         logf ~level:`info "  multi_phi_td%t = [" (proc_name_triple p_entry p_exit);
         print_indented 15 td_summary; logf ~level:`info "  ]\n";
+        (*logf ~level:`info "  wedge[phi_td%t] is [" (proc_name_triple p_entry p_exit);
+        debug_print_wedge_of_transition td_summary;
+        logf ~level:`info "  ]" (proc_name_triple p_entry p_exit);*)
         let top_down_symbols, top_down_formula = to_transition_formula td_summary in  
         logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
             (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
@@ -1463,19 +1480,6 @@ let get_procedure_summary query rg procedure =
   let entry = (RG.block_entry rg procedure).did in
   let exit = (RG.block_exit rg procedure).did in
   BURG.path_weight query entry exit
-
-let debug_print_wedge_of_transition tr = 
-  let level = if !chora_print_wedges then `always else `info in
-  let (tr_symbols, body) = to_transition_formula tr in
-  let projection x = 
-    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
-    || 
-    match Cra.V.of_symbol x with 
-    | Some v -> Cra.V.is_global v
-    | None -> false (* false *)
-  in 
-  let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
-  logf ~level:level "  %t@." (fun f -> Wedge.pp f wedge)
 
 let print_procedure_summary procedure summary = 
   let level = if !chora_print_summaries then `always else `info in
@@ -1611,7 +1615,7 @@ let resource_bound_analysis rg query =
                 Varinfo.pp procedure
           end else
           logf ~level:`always "Procedure %a has zero cost" Varinfo.pp procedure;
-          Format.printf "---------------------------------\n")
+          (*Format.printf "---------------------------------\n"*) )
     end
 
 let check_assertions rg query main assertions = 
