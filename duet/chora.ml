@@ -516,13 +516,19 @@ let post_symbol =
 let upper_symbol =
   Memo.memo (fun sym ->
    Srk.Syntax.mk_symbol Cra.srk 
-     ~name:("Upr_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
+     ~name:("Rm_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
      (Srk.Syntax.typ_symbol Cra.srk sym))
 
 let lower_symbol =
   Memo.memo (fun sym ->
    Srk.Syntax.mk_symbol Cra.srk 
-     ~name:("Lwr_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
+     ~name:("Mb_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
+     (Srk.Syntax.typ_symbol Cra.srk sym))
+
+let rb_symbol =
+  Memo.memo (fun sym ->
+   Srk.Syntax.mk_symbol Cra.srk 
+     ~name:("Rb_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
      (Srk.Syntax.typ_symbol Cra.srk sym))
 
 let to_transition_formula tr =
@@ -856,14 +862,21 @@ let upper_some_symbols formula excepting =
     else Srk.Syntax.mk_const Cra.srk (upper_symbol sym) in 
   Srk.Syntax.substitute_const Cra.srk subst_rule formula
 
+let rb_some_symbols formula excepting = 
+  let subst_rule sym = 
+    if Srk.Syntax.Symbol.Set.mem sym excepting 
+    then Srk.Syntax.mk_const Cra.srk sym
+    else Srk.Syntax.mk_const Cra.srk (rb_symbol sym) in 
+  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+
+(* In this function, we build up a bunch of formulas F1...F8 and then
+     we conjoin them.  To ensure that the different conjuncts are "wired
+     together" correctly, we do a lot of renaming the symbols in the
+     different formulas so that the ones that are supposed to talk to
+     each other do so, and the ones that aren't don't. *)
 let build_dual_height_summary 
       rb rm mb rm_solution mb_solution b_in_b_out_map bounds top_down_formula 
       excepting program_vars p_entry p_exit height_model = 
-  (* In this function, we build up a bunch of formulas F1...F8 and then
-       we conjoin them.  To ensure that the different conjuncts are "wired
-       together" correctly, we do a lot of renaming the symbols in the
-       different formulas so that the ones that are supposed to talk to
-       each other do so, and the ones that aren't don't. *)
   (* F1: rb top-down formula (Root-->Baseline), serving to constrain rb *)
   let rb_topdown = lower_some_symbols top_down_formula excepting in
   log_fmla_proc "@.    rb_tdf%t: %a" p_entry p_exit rb_topdown;
@@ -883,6 +896,7 @@ let build_dual_height_summary
   let height_ineq = Srk.Syntax.mk_leq Cra.srk rm_const rb_const in
   log_fmla_proc "@.    ht_ineq%t: %a" p_entry p_exit height_ineq;
   (* F5: mb solution relating mb, b_in_low, b_out_low, with b_in_low = 0 *)
+  let original_mb_solution = mb_solution in 
   let mb_solution = rename_b_in_to_zero b_in_b_out_map mb_solution in 
   let mb_solution = lower_some_symbols mb_solution excepting in
   log_fmla_proc "@.    mb_simplified%t: %a" p_entry p_exit mb_solution;
@@ -913,10 +927,32 @@ let build_dual_height_summary
       List.map make_bridging_conjuncts bounds.bound_pairs in 
     Srk.Syntax.mk_and Cra.srk bridging_conjuncts in 
   log_fmla_proc "@.    bd_bridge conj%t: %a" p_entry p_exit bound_bridge;
+  let first_part = [rb_topdown;rm_topdown;height_eq;height_ineq] in
+  let last_part = [mb_solution;bound_bridge;rm_solution;bound_upper] in
+  (* let fallback = [] in *) (* uncomment this if you comment out fallback *) 
+  (* ===== Optional "Fallback" to height-based analysis ===== *)
+  (* This can be commented out to simplify DHA, removing HBA fallback *)
+  (* F9(optional) bound_rb: each prog. var. term <= each b_out_rb *)
+  let bound_rb = 
+    let make_bounding_conjuncts (in_sym,term) =
+      let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
+      Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym) in
+    let bounding_conjuncts = 
+      List.map make_bounding_conjuncts bounds.bound_pairs in 
+    Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
+  let bound_rb = rb_some_symbols bound_rb excepting in 
+  log_fmla_proc "@.    bd_rb conj%t: %a" p_entry p_exit bound_rb;
+  (* F10(optional) rb solution relating rb, b_in_rb, b_out_rb with b_in_rb=0 *)
+  let rb_solution = substitute_one_sym 
+    original_mb_solution (post_symbol mb.symbol) (post_symbol rb.symbol) in
+  let rb_solution = rename_b_in_to_zero b_in_b_out_map rb_solution in 
+  let rb_solution = rb_some_symbols rb_solution excepting in
+  log_fmla_proc "@.    rb_simplified%t: %a" p_entry p_exit rb_solution;
+  let fallback = [bound_rb;rb_solution] in 
+  (* ==============  End of Fallback section   ============== *)
   (* big_conjunction *)
   let big_conjunction = Srk.Syntax.mk_and Cra.srk 
-    [rb_topdown;rm_topdown;height_eq;height_ineq;
-     mb_solution;bound_bridge;rm_solution;bound_upper] in
+    (first_part @ fallback @ last_part) in
   log_fmla_proc "@.    DHA conj%t: %a" p_entry p_exit big_conjunction; 
   (* Produce the final summary from this conjunction formula *)
   (*     FIXME: I should really be iterating over the SCC footprint variables,
