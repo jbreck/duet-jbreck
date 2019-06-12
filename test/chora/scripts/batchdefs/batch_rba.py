@@ -7,4 +7,5 @@ batch["format_style"] = "rba"
 batch["warmupfiles"] = ["rba/cost_fib.c","rba/cost_fib_eq.c"]
 batch["toolIDs"] = ["chora","choradual"]
 batch["format_col_width_proportional"] = True
+batch["timeout"] = 60
 
