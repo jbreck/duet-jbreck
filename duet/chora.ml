@@ -475,6 +475,26 @@ end)
 
 let chora_print_summaries = ref false
 let chora_print_wedges = ref false
+let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
+
+type val_sym = { 
+    value: Cra.value; 
+    symbol:Srk.Syntax.symbol
+}
+type height_model_type = 
+    (* Root to baseline of tree *)
+    | RB of val_sym 
+    (* Root to baseline, root to midline, midline to baseline *)
+    (*   where the midline is defined as the depth of the shallowest leaf *)
+    | RB_RM_MB of val_sym * val_sym * val_sym 
+
+let make_variable name = 
+  let new_var = Core.Var.mk (Core.Varinfo.mk_global name (Core.Concrete (Core.Int 32))) in 
+  let new_var_val = Cra.VVal new_var in 
+  (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
+  let new_var_sym = Cra.V.symbol_of new_var_val in 
+  {value  = new_var_val;
+   symbol = new_var_sym}
 
 (* ugly: copied from newtonDomain just for debugging *)
 let print_indented ?(level=`info) indent k =
@@ -489,13 +509,20 @@ let post_symbol =
   Memo.memo (fun sym ->
     match Var.of_symbol sym with
     | Some var ->
-      (*let newsym = Srk.Syntax.mk_symbol Cra.srk ~name:("postrec_" ^ Var.show var) (Var.typ var :> Srk.Syntax.typ) in*)
-      let newsym = Srk.Syntax.mk_symbol Cra.srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ) in
-      (*logf ~level:`info "New Symbol Created!  old=%s  new=%s\n" 
-        (Srk.Syntax.show_symbol Cra.srk sym)
-        (Srk.Syntax.show_symbol Cra.srk newsym); *)
-      newsym
+      Srk.Syntax.mk_symbol Cra.srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
     | None -> assert false)
+
+let upper_symbol =
+  Memo.memo (fun sym ->
+   Srk.Syntax.mk_symbol Cra.srk 
+     ~name:("Upr_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
+     (Srk.Syntax.typ_symbol Cra.srk sym))
+
+let lower_symbol =
+  Memo.memo (fun sym ->
+   Srk.Syntax.mk_symbol Cra.srk 
+     ~name:("Lwr_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
+     (Srk.Syntax.typ_symbol Cra.srk sym))
 
 let to_transition_formula tr =
   let (tr_symbols, post_def) =
@@ -730,65 +757,164 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
 let is_an_inner_symbol sym b_in_b_out_map = 
   Srk.Syntax.Symbol.Map.mem sym b_in_b_out_map
 
-let build_summary_from_solution 
-    solution b_in_b_out_map bounds top_down_formula program_vars 
-    p_entry p_exit = 
+let log_fmla_proc formatter p_entry p_exit formula = 
+  logf ~level:`info formatter (proc_name_triple p_entry p_exit)
+      (Srk.Syntax.Formula.pp Cra.srk) formula
+
+let log_tr_proc formatter p_entry p_exit tr = 
+  logf ~level:`info formatter (proc_name_triple p_entry p_exit);
+  print_indented 17 tr;
+  logf ~level:`info "@."
+
+let rename_b_in_to_zero b_in_b_out_map solution = 
   let subst_b_in_with_zeros sym = 
     if is_an_inner_symbol sym b_in_b_out_map
     then Srk.Syntax.mk_real Cra.srk QQ.zero 
     else Srk.Syntax.mk_const Cra.srk sym in 
-  let solution_starting_at_zero = 
-    Srk.Syntax.substitute_const Cra.srk subst_b_in_with_zeros solution in 
-  (* let simpler = SrkSimplify.simplify_terms Cra.srk with_zeros in *)
-  logf ~level:`info "@.    simplified%t: %a" (proc_name_triple p_entry p_exit)
-      (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;
+  Srk.Syntax.substitute_const Cra.srk subst_b_in_with_zeros solution 
+
+(* Build a procedure summary for one procedure.
+ *
+ * Q. What's happening in case of mutual recursion? 
+ * A. Well, in case of mutual recursion, we have built and solved a 
+ *      recurrence for the current SCC; this recurrence may describe
+ *      several b_out bounding symbols, of which only a subset apply to
+ *      the procedure we're currently summarizing.  When we get to this 
+ *      point in the code, the solution formula describes all of those
+ *      bounding symbols.  However, the bounding_conjunction that we build
+ *      here references only the b_out bounding symbols that apply to the 
+ *      procedure that we're currently working on.  In that way, we're about
+ *      to build a summary that is specific to this procedure, even though
+ *      we started from a recurrence solution that is the same for all
+ *      procedures in the current SCC. *)
+let build_height_based_summary 
+    solution b_in_b_out_map bounds top_down_formula program_vars 
+    p_entry p_exit = 
+  (* b_in = 0: In the height-based analysis, initial b_in values equal zero *)
+  let solution_starting_at_zero = rename_b_in_to_zero b_in_b_out_map solution in 
+  log_fmla_proc "@.    simplified%t: %a" p_entry p_exit solution_starting_at_zero;
+  (* each term <= each b_out:  *)
   let bounding_conjunction = 
     let make_bounding_conjuncts (in_sym,term) =
       let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
-      (* let subst_post sym = Srk.Syntax.mk_const Cra.srk (post_symbol sym) in 
-      let post_term = Srk.Syntax.substitute_const Cra.srk subst_post term in *)
       Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym)
     in
     let bounding_conjuncts = 
       List.map make_bounding_conjuncts bounds.bound_pairs in 
     Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
-  logf ~level:`info "@.    bddg conj%t: %a" (proc_name_triple p_entry p_exit)
-      (Srk.Syntax.Formula.pp Cra.srk) bounding_conjunction; 
+  log_fmla_proc "@.    bddg conj%t: %a" p_entry p_exit bounding_conjunction; 
+  (* top_down formula /\ (solution with b_in = 0) /\ each term <= each b_out *)
   let big_conjunction = 
     Srk.Syntax.mk_and Cra.srk [top_down_formula; 
                                solution_starting_at_zero;
                                bounding_conjunction] in
-  logf ~level:`info "@.    big conj%t: %a" (proc_name_triple p_entry p_exit)
-      (Srk.Syntax.Formula.pp Cra.srk) big_conjunction; 
-  (* FIXME: I should really be iterating over the SCC footprint variables,
-            not over the list of all program variables. *)
+  log_fmla_proc "@.    big conj%t: %a" p_entry p_exit big_conjunction; 
+  (* Produce the final summary from this conjunction formula *)
+  (*     FIXME: I should really be iterating over the SCC footprint variables,
+                not over the list of all program variables. *)
+  let final_tr_symbols = 
+    List.map (fun var -> 
+      let pre_sym = Cra.V.symbol_of var in 
+      let post_sym = post_symbol pre_sym in 
+      (pre_sym,post_sym)) program_vars in 
+  let height_based_summary = of_transition_formula final_tr_symbols big_conjunction in 
+  log_tr_proc "@.    HBA_summary%t = " p_entry p_exit height_based_summary;
+  height_based_summary
+
+let substitute_one_sym formula old_sym new_sym =  
+  let subst_rule sym = 
+    if sym == old_sym 
+    then Srk.Syntax.mk_const Cra.srk new_sym  
+    else Srk.Syntax.mk_const Cra.srk sym in
+  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+
+let lower_some_symbols formula excepting = 
+  let subst_rule sym = 
+    if Srk.Syntax.Symbol.Set.mem sym excepting 
+    then Srk.Syntax.mk_const Cra.srk sym
+    else Srk.Syntax.mk_const Cra.srk (lower_symbol sym) in 
+  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+
+let upper_some_symbols formula excepting = 
+  let subst_rule sym = 
+    if Srk.Syntax.Symbol.Set.mem sym excepting 
+    then Srk.Syntax.mk_const Cra.srk sym
+    else Srk.Syntax.mk_const Cra.srk (upper_symbol sym) in 
+  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+
+let build_dual_height_summary 
+      rb rm mb rm_solution mb_solution b_in_b_out_map bounds top_down_formula 
+      excepting program_vars p_entry p_exit height_model = 
+  (* In this function, we build up a bunch of formulas F1...F8 and then
+       we conjoin them.  To ensure that the different conjuncts are "wired
+       together" correctly, we do a lot of renaming the symbols in the
+       different formulas so that the ones that are supposed to talk to
+       each other do so, and the ones that aren't don't. *)
+  (* F1: rb top-down formula (Root-->Baseline), serving to constrain rb *)
+  let rb_topdown = lower_some_symbols top_down_formula excepting in
+  log_fmla_proc "@.    rb_tdf%t: %a" p_entry p_exit rb_topdown;
+  (* F2: rm top-down formula (Root-->Midline), serving to constrain rm *)
+  let rm_topdown = substitute_one_sym 
+    top_down_formula (post_symbol rb.symbol) (post_symbol rm.symbol) in
+  let rm_topdown = upper_some_symbols rm_topdown excepting in
+  log_fmla_proc "@.    rm_tdf%t: %a" p_entry p_exit rm_topdown;
+  (* F3: height equation: rb = rm + mb*)
+  let rb_const = Srk.Syntax.mk_const Cra.srk (post_symbol rb.symbol) in 
+  let rm_const = Srk.Syntax.mk_const Cra.srk (post_symbol rm.symbol) in 
+  let mb_const = Srk.Syntax.mk_const Cra.srk (post_symbol mb.symbol) in 
+  let height_eq = Srk.Syntax.mk_eq Cra.srk rb_const
+    (Srk.Syntax.mk_add Cra.srk [rm_const; mb_const]) in
+  log_fmla_proc "@.    ht_eq%t: %a" p_entry p_exit height_eq;
+  (* F3: height inequation: rm <= rb *)
+  let height_ineq = Srk.Syntax.mk_leq Cra.srk rm_const rb_const in
+  log_fmla_proc "@.    ht_ineq%t: %a" p_entry p_exit height_ineq;
+  (* F5: mb solution relating mb, b_in_low, b_out_low, with b_in_low = 0 *)
+  let mb_solution = rename_b_in_to_zero b_in_b_out_map mb_solution in 
+  let mb_solution = lower_some_symbols mb_solution excepting in
+  log_fmla_proc "@.    mb_simplified%t: %a" p_entry p_exit mb_solution;
+  (* F6: rm solution relating rm, b_in_up, b_out_up *)
+  let rm_solution = upper_some_symbols rm_solution excepting in
+  log_fmla_proc "@.    rm_unsimplified%t: %a" p_entry p_exit rm_solution;
+  (* F7: bound_upper: each prog. var. term <= each b_out_up:  *)
+  let bound_upper = 
+    let make_bounding_conjuncts (in_sym,term) =
+      let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
+      Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym) in
+    let bounding_conjuncts = 
+      List.map make_bounding_conjuncts bounds.bound_pairs in 
+    Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
+  let bound_upper = upper_some_symbols bound_upper excepting in 
+  log_fmla_proc "@.    bd_up conj%t: %a" p_entry p_exit bound_upper;
+  (* F8: bound_bridge: 0 <= b_in_up /\ b_in_up <= b_out_low *)
+  let bound_bridge = 
+    let make_bridging_conjuncts (in_sym,_) =
+      let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in
+      let up_in_const = Srk.Syntax.mk_const Cra.srk (upper_symbol in_sym) in 
+      let low_out_const = Srk.Syntax.mk_const Cra.srk (lower_symbol out_sym) in
+      let zero = Srk.Syntax.mk_real Cra.srk QQ.zero in
+      Srk.Syntax.mk_and Cra.srk
+        [Srk.Syntax.mk_leq Cra.srk zero up_in_const;
+         Srk.Syntax.mk_leq Cra.srk up_in_const low_out_const] in
+    let bridging_conjuncts = 
+      List.map make_bridging_conjuncts bounds.bound_pairs in 
+    Srk.Syntax.mk_and Cra.srk bridging_conjuncts in 
+  log_fmla_proc "@.    bd_bridge conj%t: %a" p_entry p_exit bound_bridge;
+  (* big_conjunction *)
+  let big_conjunction = Srk.Syntax.mk_and Cra.srk 
+    [rb_topdown;rm_topdown;height_eq;height_ineq;
+     mb_solution;bound_bridge;rm_solution;bound_upper] in
+  log_fmla_proc "@.    DHA conj%t: %a" p_entry p_exit big_conjunction; 
+  (* Produce the final summary from this conjunction formula *)
+  (*     FIXME: I should really be iterating over the SCC footprint variables,
+                not over the list of all program variables. *)
   let final_tr_symbols = 
     List.map (fun var -> 
       let pre_sym = Cra.V.symbol_of var in 
       let post_sym = post_symbol pre_sym in 
       (pre_sym,post_sym) ) program_vars in 
-  let height_based_summary = of_transition_formula final_tr_symbols big_conjunction in 
-  logf ~level:`info "@.    ht_summary%t = " (proc_name_triple p_entry p_exit);
-  print_indented 17 height_based_summary;
-  logf ~level:`info "@.";
-  (*let projection x = 
-    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false final_tr_symbols)
-    (*||
-    match Cra.V.of_symbol x with 
-    | Some v -> Cra.V.is_global v
-    | None -> false*)
-  in 
-  let wedge_summary = Wedge.abstract ~exists:projection Cra.srk big_conjunction in 
-  logf ~level:`info "    wedgified = %t@." (fun f -> Wedge.pp f wedge_summary);*)
-  height_based_summary
-  (* Things to do: 
-     - construct a havoc-like transition with post variables,
-        but use the solution as a guard
-     - the guard needs to be a conjunction of the terms in the
-        B_out definitions, but with things postified
-     - and I'm constructing a new inequation in each case...
-     - MAKE SURE to havoc the B_out variables themselves!
-        (by putting them into the transform) *)
+  let dual_height_summary = of_transition_formula final_tr_symbols big_conjunction in 
+  log_tr_proc "@.    DHA_summary%t = " p_entry p_exit dual_height_summary;
+  dual_height_summary
 
 let sanity_check_recurrences recurrences term_of_id = 
   (if not ((List.length recurrences.blk_transforms) ==
@@ -894,7 +1020,7 @@ let have_recurrence sym recurrences =
 (* This function is applied to each B_in symbol *) 
 let extract_recurrence_for_symbol 
     target_inner_sym b_in_b_out_map wedge_map recurrences 
-    recurrence_candidates (*b_in_symbols*) allow_interdependence = 
+    recurrence_candidates allow_interdependence allow_decrease = 
   (*logf ~level:`info "  Attempting extraction for %t DELETEME.@." 
     (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_inner_sym);*)
   (* First, check whether we've already extracted a recurrence for this symbol *)
@@ -920,7 +1046,7 @@ let extract_recurrence_for_symbol
     let process_coeff_dim_pair coeff dim =
       begin
       if dim == CoordinateSystem.const_id then (* ----------- CONSTANT *)
-        (if is_non_negative coeff
+        (if is_non_negative coeff || allow_decrease
           then UseTerm (coeff,dim)      (* Keep non-negative constants *)
           else DropTerm)                    (* Drop negative constants *)
       else match CoordinateSystem.destruct_coordinate sub_cs dim with 
@@ -944,9 +1070,9 @@ let extract_recurrence_for_symbol
              a recurrence yet.  We'll need to verify later that these
              two variables are part of a strongly connected comoponent of
              mutual dependency. *)
-          (if is_negative coeff
-            then DropTerm
-            else UseTermWithDependency (coeff,dim,sym))
+          (if is_non_negative coeff
+            then UseTermWithDependency (coeff,dim,sym)
+            else DropTerm)
         else 
           DropInequation
         (* The remaining cases involve non-target B_ins or 
@@ -1095,11 +1221,82 @@ let make_extraction_wedge extraction_formula bounds b_in_b_out_map b_out_symbols
   logf ~level:`trace "  Finished wedge map.";
   updated_wedge_map
 
-(*let make_height_based_summary 
-    rec_weight_nobc bounds program_vars post_height_sym top_down_formula = *)
+let extract_and_solve_recurrences 
+    b_in_b_out_map wedge_map post_height_sym ~allow_decrease = 
+  (* *********************************************************************** *)
+  (* ********               Recurrence Extraction                   ******** *)
+  let recurrence_candidates = ref [] in
+  (* This function is applied twice for each stratification level:
+      first looking for non-interdependent variables and
+      a second time allowing for interdependent variables *)
+  let rec extract_recurrences recurrences allow_interdependence = 
+    begin
+    let nb_previous_recurrences = count_recurrences recurrences in 
+    logf ~level:`trace "[Chora] Recurrence extraction:";
+    (*List.iter (fun (inner_sym, _) -> *) (* ... *) (*bounds.bound_pairs;*)
+    Srk.Syntax.Symbol.Map.iter
+      (fun inner_sym _ -> 
+          extract_recurrence_for_symbol (* This is the heart of recurrence extraction *)
+            inner_sym b_in_b_out_map wedge_map recurrences 
+            recurrence_candidates allow_interdependence allow_decrease)
+      b_in_b_out_map;
+    logf ~level:`trace "        Finished recurrence extraction";
+         
+    (*logf ~level:`info "  N candidates before filter: %d@." (List.length !recurrence_candidates);*)
+    filter_candidates recurrence_candidates recurrences; 
+    (*logf ~level:`info "  N candidates after filter:  %d@." (List.length !recurrence_candidates);*)
+    
+    let recurrences = accept_and_build_recurrences 
+      recurrence_candidates recurrences allow_interdependence in
+    logf ~level:`trace "  [ -- end of stratum -- ]";
+    (* Did we get new recurrences? If so, then look for a higher stratum. *)
+    if count_recurrences recurrences > nb_previous_recurrences then 
+      extract_recurrences recurrences false
+    else if not allow_interdependence then
+      extract_recurrences recurrences true
+    else recurrences 
+    end 
+    in 
+  let recurrences = empty_recurrence_collection () in 
+  let recurrences = extract_recurrences recurrences false in 
+  (* *)
+  (* *********************************************************************** *)
+  (* ********               Recurrence Solving                      ******** *)
+  (* *)
+  let term_of_id = BatDynArray.to_array recurrences.term_of_id in 
+  sanity_check_recurrences recurrences term_of_id;
+  (* TODO: Change my interface to use pairs of transform_add blocks *)
+  (* Send the matrix recurrence to OCRS and obtain a solution *)
+  logf ~level:`trace "@.    Sending to OCRS ";
+  let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
+  let nb_constants = 0 in
+  let solution = SolvablePolynomial.exp_ocrs_external 
+                  Cra.srk recurrences.ineq_tr loop_counter term_of_id 
+                  nb_constants recurrences.blk_transforms 
+                  recurrences.blk_adds in 
+  logf ~level:`info "@.    solution: %a" 
+      (Srk.Syntax.Formula.pp Cra.srk) solution;
+  (* *)
+  solution
+
+(*
+(* Do I need to do something to rename *all* symbols before conjoining? *)
+(* Except that I don't want to rename pre-state program variables? *)
+(* Hmm, this is complicated *)
+let rename_height_sym old_sym new_sym phi = 
+  let subst x =
+    if x = cost_symbol then
+      Ctx.mk_real QQ.zero
+    else
+      Ctx.mk_const x
+  in
+  let rhs =
+    Syntax.substitute_const Cra.srk subst (K.get_transform cost summary)
+*)
+
 let make_height_based_summaries
       rec_case_map bounds_map program_vars top_down_formula_map 
-      (scc:BURG.scc) post_height_sym =
+      (scc:BURG.scc) height_model =
   (* *)
   let b_in_b_out_map = Srk.Syntax.Symbol.Map.empty in 
   let b_out_symbols = Srk.Syntax.Symbol.Set.empty in
@@ -1123,10 +1320,6 @@ let make_height_based_summaries
       (extraction_formula_map, b_in_b_out_map, b_out_symbols))
     (extraction_formula_map, b_in_b_out_map, b_out_symbols)
     scc.procs in 
-  (*let (extraction_formula, b_in_b_out_map, b_out_symbols) = 
-      make_extraction_formula 
-        rec_weight_nobc bounds b_in_b_out_map b_out_symbols in*)
-  (* TODO: Iterate this for all procedures... *)
   let wedge_map = 
     List.fold_left (fun wedge_map (p_entry,p_exit,pathexpr) ->
       let extraction_formula = 
@@ -1136,94 +1329,62 @@ let make_height_based_summaries
         extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map)
     wedge_map
     scc.procs in 
-  (*let wedge_map = 
-      make_extraction_wedge 
-        extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map in*)
-  (* *)
+  match height_model with 
   (* *********************************************************************** *)
-  (* ********               Recurrence Extraction                   ******** *)
-  let recurrence_candidates = ref [] in
-  (* This function is applied twice for each stratification level:
-      first looking for non-interdependent variables and
-      a second time allowing for interdependent variables *)
-  let rec extract_recurrences recurrences allow_interdependence = 
-    begin
-    let nb_previous_recurrences = count_recurrences recurrences in 
-    logf ~level:`trace "[Chora] Recurrence extraction:";
-    (*List.iter (fun (inner_sym, _) -> *) (* ... *) (*bounds.bound_pairs;*)
-    Srk.Syntax.Symbol.Map.iter
-      (fun inner_sym _ -> 
-          extract_recurrence_for_symbol (* This is the heart of recurrence extraction *)
-            inner_sym b_in_b_out_map wedge_map recurrences 
-            recurrence_candidates (*b_in_symbols*) allow_interdependence)
-      b_in_b_out_map;
-    logf ~level:`trace "        Finished recurrence extraction";
-         
-    (*logf ~level:`info "  N candidates before filter: %d@." (List.length !recurrence_candidates);*)
-    filter_candidates recurrence_candidates recurrences; 
-    (*logf ~level:`info "  N candidates after filter:  %d@." (List.length !recurrence_candidates);*)
-    
-    let recurrences = accept_and_build_recurrences 
-      recurrence_candidates recurrences allow_interdependence in
-    logf ~level:`trace "  [ -- end of stratum -- ]";
-    (* Did we get new recurrences? If so, then look for a higher stratum. *)
-    if count_recurrences recurrences > nb_previous_recurrences then 
-      extract_recurrences recurrences false
-    else if not allow_interdependence then
-      extract_recurrences recurrences true
-    else recurrences 
-    end 
-    in 
-  let recurrences = empty_recurrence_collection () in 
-  (* Here is the actual call to the recurrence extraction code *)
-  let recurrences = extract_recurrences recurrences false in 
-  (* Here recurrence extraction is complete *)
-  (* *)
+  (* ********                Height-based Analysis                  ******** *)
+  | RB rb -> let post_height_sym = post_symbol rb.symbol in 
+    (* ---------- Extract and solve recurrences --------- *)
+    let solution = extract_and_solve_recurrences 
+      b_in_b_out_map wedge_map post_height_sym ~allow_decrease:false in
+    (* ---------- Build summaries using recurrence solution --------- *)
+    let summary_list = 
+      List.fold_left (fun sums (p_entry,p_exit,pathexpr) ->
+        let top_down_formula = 
+            IntPairMap.find (p_entry,p_exit) top_down_formula_map in 
+        let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
+        let summary = build_height_based_summary 
+          solution b_in_b_out_map bounds top_down_formula program_vars p_entry p_exit in
+        (p_entry,p_exit,summary)::sums)
+      []
+      scc.procs in 
+    summary_list
   (* *********************************************************************** *)
-  (* ********               Recurrence Solving                      ******** *)
-  (* *)
-  let term_of_id = BatDynArray.to_array recurrences.term_of_id in 
-  sanity_check_recurrences recurrences term_of_id;
-  (* Change to pairs of transform_add blocks *)
-  (* Add the appropriate constraint to the loop counter, so K >= 0 *)
-  (* Send the matrix recurrence to OCRS and obtain a solution *)
-  logf ~level:`trace "@.    Sending to OCRS ";
-  (* Assuming single post-state height symbol shared by all procs in SCC *)
-  let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
-  let nb_constants = 0 in
-  let solution = SolvablePolynomial.exp_ocrs_external 
-                  Cra.srk recurrences.ineq_tr loop_counter term_of_id 
-                  nb_constants recurrences.blk_transforms 
-                  recurrences.blk_adds in 
-  logf ~level:`info "@.    solution: %a" 
-      (Srk.Syntax.Formula.pp Cra.srk) solution;
-  (* *)
-  (* *********************************************************************** *)
-  (* ********      Building summaries using recurrence solution     ******** *)
-  let summary_list = 
-    List.fold_left (fun sums (p_entry,p_exit,pathexpr) ->
-      let top_down_formula = 
-          IntPairMap.find (p_entry,p_exit) top_down_formula_map in 
-      let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
-      let summary = build_summary_from_solution 
-        solution b_in_b_out_map bounds top_down_formula program_vars p_entry p_exit in
-      (p_entry,p_exit,summary)::sums)
-    []
-    scc.procs in 
-  summary_list
-  (* Old, single-procedure version: *)    
-  (*build_summary_from_solution 
-    solution b_in_b_out_map bounds top_down_formula program_vars*)
+  (* ********                 Dual-height Analysis                  ******** *)
+  | RB_RM_MB (rb, rm, mb) -> 
+    begin 
+    (* ---------- Extract and solve recurrences --------- *)
+    let rm_solution = extract_and_solve_recurrences 
+      b_in_b_out_map wedge_map (post_symbol rm.symbol) ~allow_decrease:true in
+    let mb_solution = extract_and_solve_recurrences 
+      b_in_b_out_map wedge_map (post_symbol mb.symbol) ~allow_decrease:false in
+    (* ---------- Build summaries using recurrence solution --------- *)
+    let excepting = List.fold_left (fun excepting v -> 
+        let sym = Cra.V.symbol_of v in 
+        let excepting = Srk.Syntax.Symbol.Set.add sym excepting in 
+        Srk.Syntax.Symbol.Set.add (post_symbol sym) excepting)
+      Srk.Syntax.Symbol.Set.empty
+      (rb.value::rm.value::mb.value::program_vars) in 
+    let summary_list = 
+      List.fold_left (fun sums (p_entry,p_exit,pathexpr) ->
+        let top_down_formula = 
+            IntPairMap.find (p_entry,p_exit) top_down_formula_map in 
+        let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
+        let summary = build_dual_height_summary
+          rb rm mb rm_solution mb_solution b_in_b_out_map bounds 
+          top_down_formula excepting program_vars p_entry p_exit 
+          height_model in
+        (p_entry,p_exit,summary)::sums)
+      []
+      scc.procs in 
+    summary_list
+    end
 ;;
  
-let make_top_down_weight_multi 
-    procs top (ts : Cra.K.t Cra.label Cra.WG.t) is_scc_call lower_summaries base_case_map =
+let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t) 
+      is_scc_call lower_summaries base_case_map height =
   (* Note: this height variable really represents depth *)
-  let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
-  let height_var_val = Cra.VVal height_var in 
-  let height_var_sym = Cra.V.symbol_of height_var_val in (* NOTE: symbol_of puts symbol into hash table *)
-  let set_height_zero = assign_value_to_literal height_var_val 0 in 
-  let increment_height = increment_variable height_var_val in 
+  let set_height_zero = assign_value_to_literal height.value 0 in 
+  let increment_height = increment_variable height.value in 
   let top_graph = ref BURG.empty in
   let dummy_exit_node = ref 0 in (* A dummy exit node representing having finished a base case *)
   List.iter (fun (p_entry,p_exit,pathexpr) ->
@@ -1256,7 +1417,6 @@ let make_top_down_weight_multi
       let weight = K.mul base_case_weight top in
       top_graph := Srk.WeightedGraph.add_edge !top_graph p_entry (Weight weight) !dummy_exit_node)
     procs;
-  let post_height_sym_ref = ref None in 
   let td_formula_map = (List.fold_left (fun td_formula_map (p_entry,p_exit,pathexpr) ->
       match WeightedGraph.path_weight !top_graph p_entry !dummy_exit_node with
       | Weight cycles ->
@@ -1266,13 +1426,10 @@ let make_top_down_weight_multi
         let top_down_symbols, top_down_formula = to_transition_formula td_summary in  
         logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
             (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
-        let is_post_height (pre_sym,post_sym) = (pre_sym == height_var_sym) in 
-        post_height_sym_ref := Some (snd (List.find is_post_height top_down_symbols));
         IntPairMap.add (p_entry,p_exit) top_down_formula td_formula_map
       | _ -> failwith "A call was found in td_summary")
     IntPairMap.empty procs) in
-  match !post_height_sym_ref with | None -> failwith "Missing PHS" | Some post_height_sym -> 
-  (td_formula_map, post_height_sym);;
+  td_formula_map;;
 
 let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges = 
   let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
@@ -1619,7 +1776,6 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
         IntPairMap.empty 
         scc.procs in 
 
-
       (*   ***   Compute the weights of the base case of each procedure  ***   *)
       let base_case_map = List.fold_left (fun bc_map (p_entry,p_exit,pathexpr) ->
           let (rec_pe,nonrec_pe) = IntPairMap.find (p_entry,p_exit) split_expr_map in
@@ -1631,10 +1787,19 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
         IntPairMap.empty 
         scc.procs in 
 
+      let simple_height = make_variable (if !chora_dual then "RB" else "H") in 
+      let height_model = 
+        if !chora_dual then 
+          let rm = make_variable "RM" in 
+          let mb = make_variable "MB" in 
+          RB_RM_MB (simple_height (* that is, rb *), rm, mb)
+        else 
+          RB (simple_height) in 
+
       logf ~level:`info "  Beginning top-down analysis"; 
       (*   ***   Compute top-down summaries for each procedure   ***   *)
-      let (top_down_formula_map, post_height_sym) = 
-        make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries base_case_map in
+      let top_down_formula_map = 
+        make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries base_case_map simple_height in
       logf ~level:`info "  Finished top-down analysis"; 
 
       (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
@@ -1672,7 +1837,7 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
 
       let summary_list = 
         make_height_based_summaries
-          rec_case_map bounds_map program_vars top_down_formula_map scc post_height_sym in 
+          rec_case_map bounds_map program_vars top_down_formula_map scc height_model in 
 
         summary_list 
     end in
@@ -1714,7 +1879,11 @@ let _ =
   CmdLine.register_config
     ("-chora-wedges",
      Arg.Set chora_print_wedges,
-     " Print procedure summaries abstracted to wedges")
+     " Print procedure summaries abstracted to wedges");
+  CmdLine.register_config
+    ("-chora-dual",
+     Arg.Set chora_dual,
+     " Compute non-trivial lower bounds in addition to upper bounds ") (* "dual-height" analysis *)
 
 (* 
   Format.printf "wedge: @.  %t @.@." (fun f -> Wedge.pp f wedge);
@@ -1915,3 +2084,7 @@ let make_top_down_weight_multi
 *)
 
 
+  (*logf ~level:`info "@.    simplified%t: %a" (proc_name_triple p_entry p_exit)
+      (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;*)
+      (* let subst_post sym = Srk.Syntax.mk_const Cra.srk (post_symbol sym) in 
+      let post_term = Srk.Syntax.substitute_const Cra.srk subst_post term in *)
