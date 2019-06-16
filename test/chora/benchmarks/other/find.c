@@ -1,4 +1,3 @@
-int __cost;
 int nTicks;
 int find(int * A, int n) { return findAux(A,0,n,0,0); }
 int findAux(int * A, int i, int n, int sum, int nAdded) {
@@ -10,8 +9,6 @@ int findAux(int * A, int i, int n, int sum, int nAdded) {
 }
 void main(int n) {
     int * A;
-    nTicks = 0;
     // A = malloc(n);
     find(A,n);
-    __cost = nTicks;
 }
