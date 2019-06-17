@@ -1194,6 +1194,7 @@ let extract_recurrence_for_symbol
   List.iter process_constraint (Wedge.polyhedron sub_wedge) 
   end 
 
+(* Called once per outer bounding symbol *)
 let make_outer_bounding_symbol
     (local_b_out_definitions, b_in_b_out_map, b_out_symbols) 
     (inner_sym, term) =
@@ -1212,16 +1213,16 @@ let make_outer_bounding_symbol
    Srk.Syntax.Symbol.Map.add inner_sym outer_sym b_in_b_out_map,
    Srk.Syntax.Symbol.Set.add outer_sym b_out_symbols)
 
-let make_extraction_formula 
-  recursive_weight_nobc bounds b_in_b_out_map b_out_symbols =
-  (*let local_b_out_definitions = ref [] in*)
+(* Called once per proc *)
+let make_outer_bounding_symbols_for_proc 
+    recursive_weight_nobc bounds b_in_b_out_map b_out_symbols =
   (* REMOVE BASE CASE semantically using the "recursion_flag" *)
   (*let initially_no_recursion = (assign_value_to_literal bounds.recursion_flag 0) in 
   let eventually_recursion = (assume_value_eq_literal bounds.recursion_flag 1) in 
   let recursive_weight_nobc = 
     K.mul (K.mul initially_no_recursion recursive_weight) eventually_recursion in*)
   let (tr_symbols, body) = to_transition_formula recursive_weight_nobc in
-  logf ~level:`info "  rec_case_formula_body: @.%a@." (Srk.Syntax.Formula.pp Cra.srk) body;
+  logf ~level:`trace "  rec_case_formula_body: @.%a@." (Srk.Syntax.Formula.pp Cra.srk) body;
   (* *)
   logf ~level:`info "[Chora] Listing bounded terms:";
   let (local_b_out_definitions, b_in_b_out_map, b_out_symbols) =
@@ -1230,20 +1231,63 @@ let make_extraction_formula
       ([], b_in_b_out_map, b_out_symbols)
       bounds.bound_pairs in
   logf ~level:`trace "        Finished with bounded terms.";
+  (local_b_out_definitions, b_in_b_out_map, b_out_symbols, body)
+
+(* Called once per SCC *)
+let make_outer_bounding_symbols (scc:BURG.scc) rec_case_map bounds_map =
+  let b_in_b_out_map = Srk.Syntax.Symbol.Map.empty in 
+  let b_out_symbols = Srk.Syntax.Symbol.Set.empty in
+  let b_out_definitions_map = IntPairMap.empty in 
+  let body_map = IntPairMap.empty in 
+  List.fold_left 
+    (fun 
+      (b_out_definitions_map, b_in_b_out_map, b_out_symbols, body_map)
+      (p_entry,p_exit,pathexpr) ->
+      let rec_weight_nobc = IntPairMap.find (p_entry,p_exit) rec_case_map in 
+      let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
+      let local_b_out_definitions, b_in_b_out_map, b_out_symbols, body = 
+        make_outer_bounding_symbols_for_proc 
+          rec_weight_nobc bounds b_in_b_out_map b_out_symbols in
+      let b_out_definitions_map = 
+          IntPairMap.add (p_entry, p_exit) local_b_out_definitions 
+            b_out_definitions_map in
+      let body_map = 
+        IntPairMap.add (p_entry, p_exit) body body_map in 
+      (b_out_definitions_map, b_in_b_out_map, b_out_symbols, body_map))
+    (b_out_definitions_map, b_in_b_out_map, b_out_symbols, body_map)
+    scc.procs
+
+(* Called once per procedure per value of allow_decrease *)
+let make_extraction_formula 
+    recursive_weight_nobc bounds local_b_out_definitions b_in_b_out_map 
+    b_out_symbols body ~allow_decrease =
   (* *)
-  let non_negative_b_in (inner_sym, _) = 
-    let lhs = Srk.Syntax.mk_real Cra.srk QQ.zero in 
-    let rhs = Srk.Syntax.mk_const Cra.srk inner_sym in 
-    Srk.Syntax.mk_leq Cra.srk lhs rhs in
-  let all_b_in_non_negative = List.map non_negative_b_in bounds.bound_pairs in 
-  let b_in_conjunction = Srk.Syntax.mk_and Cra.srk all_b_in_non_negative in 
+  (* ----- These lines assume every b_in is non-negative. ----- *)
+  (* They are only used, and only sound, when allow_decrease is false. *)
+  let b_in_conjunction = 
+    if allow_decrease
+    then []
+    else begin
+         let non_negative_b_in (inner_sym, _) = 
+         let lhs = Srk.Syntax.mk_real Cra.srk QQ.zero in 
+         let rhs = Srk.Syntax.mk_const Cra.srk inner_sym in 
+         Srk.Syntax.mk_leq Cra.srk lhs rhs in
+         (* *)
+         let all_b_in_non_negative = 
+           List.map non_negative_b_in bounds.bound_pairs in 
+         [Srk.Syntax.mk_and Cra.srk all_b_in_non_negative] 
+    end in 
+  (* ---------------------------------------------------------- *)
   (* *)
   let b_out_conjunction = Srk.Syntax.mk_and Cra.srk local_b_out_definitions in 
   (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
-  let extraction_formula = Srk.Syntax.mk_and Cra.srk [b_in_conjunction; body; b_out_conjunction] in 
-  (extraction_formula, b_in_b_out_map, b_out_symbols)
+  let conjuncts = b_in_conjunction @ [body; b_out_conjunction] in
+  let extraction_formula = Srk.Syntax.mk_and Cra.srk conjuncts in 
+  extraction_formula (* formerly had a tuple of return values *)
 
-let make_extraction_wedge extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map = 
+(* Called once per procedure (per value of allow_decrease) *)
+let make_extraction_wedges
+    extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map = 
   (* NOTE: bounding symbols need to have been analyzed for all procedures in the SCC by this point *)
   let projection sym = 
     (*Srk.Syntax.Symbol.Set.mem sym !b_in_symbols*) 
@@ -1330,63 +1374,67 @@ let extract_and_solve_recurrences
   (* *)
   solution
 
-(*
-(* Do I need to do something to rename *all* symbols before conjoining? *)
-(* Except that I don't want to rename pre-state program variables? *)
-(* Hmm, this is complicated *)
-let rename_height_sym old_sym new_sym phi = 
-  let subst x =
-    if x = cost_symbol then
-      Ctx.mk_real QQ.zero
-    else
-      Ctx.mk_const x
-  in
-  let rhs =
-    Syntax.substitute_const Cra.srk subst (K.get_transform cost summary)
-*)
-
-let make_height_based_summaries
-      rec_case_map bounds_map program_vars top_down_formula_map 
-      (scc:BURG.scc) height_model =
-  (* *)
-  let b_in_b_out_map = Srk.Syntax.Symbol.Map.empty in 
-  let b_out_symbols = Srk.Syntax.Symbol.Set.empty in
-  let wedge_map = Srk.Syntax.Symbol.Map.empty in 
-  let extraction_formula_map = IntPairMap.empty in 
-  (* *)
+(* Called once per SCC per value of allow_decrease *)
+let build_wedge_map 
+      b_out_definitions_map b_in_b_out_map b_out_symbols rec_case_map bounds_map 
+      program_vars top_down_formula_map (scc:BURG.scc) body_map ~allow_decrease =
   (* For each procedure, create a transition formula for use in extraction *)
-  let (extraction_formula_map, b_in_b_out_map, b_out_symbols) = 
+  let extraction_formula_map = 
     List.fold_left 
-      (fun 
-        (extraction_formula_map, b_in_b_out_map, b_out_symbols)
+      (fun extraction_formula_map
         (p_entry,p_exit,pathexpr) ->
       let rec_weight_nobc = IntPairMap.find (p_entry,p_exit) rec_case_map in 
       let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
-      let (extraction_formula, b_in_b_out_map, b_out_symbols) = 
+      let body = IntPairMap.find (p_entry,p_exit) body_map in 
+      let local_b_out_definitions = 
+        IntPairMap.find (p_entry,p_exit) b_out_definitions_map in 
+      let extraction_formula = 
         make_extraction_formula 
-          rec_weight_nobc bounds b_in_b_out_map b_out_symbols in
-      let extraction_formula_map = 
-        IntPairMap.add 
-          (p_entry,p_exit) extraction_formula extraction_formula_map in
-      (extraction_formula_map, b_in_b_out_map, b_out_symbols))
-    (extraction_formula_map, b_in_b_out_map, b_out_symbols)
+          rec_weight_nobc bounds local_b_out_definitions
+          b_in_b_out_map b_out_symbols body ~allow_decrease in
+      IntPairMap.add (p_entry,p_exit) extraction_formula extraction_formula_map)
+    IntPairMap.empty
     scc.procs in 
+  (* For each procedure, create a wedge for use in extraction *)
   let wedge_map = 
     List.fold_left (fun wedge_map (p_entry,p_exit,pathexpr) ->
       let extraction_formula = 
           IntPairMap.find (p_entry,p_exit) extraction_formula_map in 
       let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
-      make_extraction_wedge 
+      make_extraction_wedges
         extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map)
-    wedge_map
+    Srk.Syntax.Symbol.Map.empty
     scc.procs in 
+  wedge_map
+
+(* Called once per SCC per value of allow_decrease *)
+let build_wedges_and_extract_recurrences 
+      b_out_definitions_map b_in_b_out_map b_out_symbols 
+      rec_case_map bounds_map program_vars top_down_formula_map 
+      scc post_height_sym body_map ~allow_decrease =
+  let wedge_map = build_wedge_map
+    b_out_definitions_map b_in_b_out_map b_out_symbols 
+    rec_case_map bounds_map program_vars top_down_formula_map 
+    scc body_map ~allow_decrease in
+  extract_and_solve_recurrences 
+    b_in_b_out_map wedge_map post_height_sym ~allow_decrease
+  (* returns solution *)
+
+let make_height_based_summaries
+      rec_case_map bounds_map program_vars top_down_formula_map 
+      (scc:BURG.scc) height_model =
+  (* *)
+  let (b_out_definitions_map, b_in_b_out_map, b_out_symbols, body_map) = 
+    make_outer_bounding_symbols scc rec_case_map bounds_map in 
   match height_model with 
   (* *********************************************************************** *)
   (* ********                Height-based Analysis                  ******** *)
-  | RB rb -> let post_height_sym = post_symbol rb.symbol in 
+  | RB rb -> 
     (* ---------- Extract and solve recurrences --------- *)
-    let solution = extract_and_solve_recurrences 
-      b_in_b_out_map wedge_map post_height_sym ~allow_decrease:false in
+    let solution = build_wedges_and_extract_recurrences 
+      b_out_definitions_map b_in_b_out_map b_out_symbols 
+      rec_case_map bounds_map program_vars top_down_formula_map 
+      scc (post_symbol rb.symbol) body_map ~allow_decrease:false in
     (* ---------- Build summaries using recurrence solution --------- *)
     let summary_list = 
       List.fold_left (fun sums (p_entry,p_exit,pathexpr) ->
@@ -1404,10 +1452,15 @@ let make_height_based_summaries
   | RB_RM_MB (rb, rm, mb) -> 
     begin 
     (* ---------- Extract and solve recurrences --------- *)
-    let rm_solution = extract_and_solve_recurrences 
-      b_in_b_out_map wedge_map (post_symbol rm.symbol) ~allow_decrease:true in
-    let mb_solution = extract_and_solve_recurrences 
-      b_in_b_out_map wedge_map (post_symbol mb.symbol) ~allow_decrease:false in
+    let rm_solution = build_wedges_and_extract_recurrences 
+      b_out_definitions_map b_in_b_out_map b_out_symbols 
+      rec_case_map bounds_map program_vars top_down_formula_map 
+      scc (post_symbol rm.symbol) body_map ~allow_decrease:true in
+    (* *)
+    let mb_solution = build_wedges_and_extract_recurrences 
+      b_out_definitions_map b_in_b_out_map b_out_symbols 
+      rec_case_map bounds_map program_vars top_down_formula_map 
+      scc (post_symbol mb.symbol) body_map ~allow_decrease:false in
     (* ---------- Build summaries using recurrence solution --------- *)
     let excepting = List.fold_left (fun excepting v -> 
         let sym = Cra.V.symbol_of v in 
@@ -2133,3 +2186,21 @@ let make_top_down_weight_multi
       (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;*)
       (* let subst_post sym = Srk.Syntax.mk_const Cra.srk (post_symbol sym) in 
       let post_term = Srk.Syntax.substitute_const Cra.srk subst_post term in *)
+
+
+
+(*
+(* Do I need to do something to rename *all* symbols before conjoining? *)
+(* Except that I don't want to rename pre-state program variables? *)
+(* Hmm, this is complicated *)
+let rename_height_sym old_sym new_sym phi = 
+  let subst x =
+    if x = cost_symbol then
+      Ctx.mk_real QQ.zero
+    else
+      Ctx.mk_const x
+  in
+  let rhs =
+    Syntax.substitute_const Cra.srk subst (K.get_transform cost summary)
+*)
+
