@@ -475,6 +475,7 @@ end)
 
 let chora_print_summaries = ref false
 let chora_print_wedges = ref false
+let chora_print_depth_bound_wedges = ref false
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
 let chora_fallback = ref false
 
@@ -559,8 +560,24 @@ let of_transition_formula tr_symbols fmla =
     in
     K.construct fmla transform
 
-let debug_print_wedge_of_transition tr = 
-  let level = if !chora_print_wedges then `always else `info in
+let debug_print_depth_wedge tr = 
+  (* NOTE: now applying project *)
+  let (tr_symbols, body) = to_transition_formula (project tr) in
+  let projection x = 
+    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
+    || 
+    match Cra.V.of_symbol x with 
+    | Some v -> Cra.V.is_global v
+    | None -> false (* false *)
+  in 
+  logf ~level:`always "  %t" 
+    (fun f -> Wedge.pp f (Wedge.abstract ~exists:projection Cra.srk body))
+
+let debug_print_wedge_of_transition ?(levelParam=None) tr = 
+  let level = match levelParam with 
+              | None -> if !chora_print_wedges then `always else `info 
+              | Some lev -> lev
+    in
   let (tr_symbols, body) = to_transition_formula tr in
   let projection x = 
     (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
@@ -586,6 +603,12 @@ let assume_value_eq_literal value literal =
   K.assume (Srk.Syntax.mk_eq Cra.srk 
     (Srk.Syntax.mk_const Cra.srk var)
     (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal)))
+
+let assume_literal_leq_value literal value = 
+  let var = Cra.V.symbol_of value in 
+  K.assume (Srk.Syntax.mk_leq Cra.srk 
+    (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal))
+    (Srk.Syntax.mk_const Cra.srk var))
 
 let increment_variable value = 
   K.assign
@@ -1283,6 +1306,7 @@ let make_extraction_formula
   (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
   let conjuncts = b_in_conjunction @ [body; b_out_conjunction] in
   let extraction_formula = Srk.Syntax.mk_and Cra.srk conjuncts in 
+  logf ~level:`trace "  extraction_formula: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) extraction_formula;
   extraction_formula (* formerly had a tuple of return values *)
 
 (* Called once per procedure (per value of allow_decrease) *)
@@ -1485,7 +1509,8 @@ let make_height_based_summaries
 ;;
  
 let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t) 
-      is_scc_call lower_summaries base_case_map height =
+      is_scc_call lower_summaries base_case_map height 
+      (* for debugging:  program_vars *) =
   (* Note: this height variable really represents depth *)
   let set_height_zero = assign_value_to_literal height.value 0 in 
   let increment_height = increment_variable height.value in 
@@ -1525,11 +1550,18 @@ let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t)
       match WeightedGraph.path_weight !top_graph p_entry !dummy_exit_node with
       | Weight cycles ->
         let td_summary = K.mul set_height_zero cycles in
+        (* NOTE: if we want to assume H' >= 0, we could do it right here *)
+        (* ... let h_geq_zero = assume_literal_leq_value literal value ... *)
+        (* NOTE: if we want to squeeze the top-down summary, we could do it right here *)
+        let td_summary = project td_summary in (* FIXME Should I be doing this? *)
         logf ~level:`info "  multi_phi_td%t = [" (proc_name_triple p_entry p_exit);
         print_indented 15 td_summary; logf ~level:`info "  ]\n";
-        (*logf ~level:`info "  wedge[phi_td%t] is [" (proc_name_triple p_entry p_exit);
-        debug_print_wedge_of_transition td_summary;
-        logf ~level:`info "  ]" (proc_name_triple p_entry p_exit);*)
+        (if !chora_print_depth_bound_wedges then
+        begin
+          logf ~level:`always "  wedge[phi_td%t] is [" (proc_name_triple p_entry p_exit);
+          debug_print_depth_wedge td_summary;
+          logf ~level:`always "  ]";
+        end);
         let top_down_symbols, top_down_formula = to_transition_formula td_summary in  
         logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
             (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
@@ -1811,6 +1843,11 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       )) file.vars in 
     List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in 
   let top = K.havoc program_vars in 
+
+  (*logf ~level:`info "  top = [";
+  print_indented 15 top;
+  logf ~level:`info "  ]\n";*)
+
   let weight_of_call_zero cs ct cen cex = K.zero in
   (*let summarizer (scc : BURG.scc) path_weight_internal context pathexp_algebra =*)
   let summarizer (scc : BURG.scc) path_graph context lower_summaries = 
@@ -1893,7 +1930,8 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       logf ~level:`info "  Beginning top-down analysis"; 
       (*   ***   Compute top-down summaries for each procedure   ***   *)
       let top_down_formula_map = 
-        make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries base_case_map simple_height in
+        make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries 
+          base_case_map simple_height (* for debugging program_vars *) in
       logf ~level:`info "  Finished top-down analysis"; 
 
       (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
@@ -1974,6 +2012,10 @@ let _ =
     ("-chora-wedges",
      Arg.Set chora_print_wedges,
      " Print procedure summaries abstracted to wedges");
+  CmdLine.register_config
+    ("-chora-debug-depth-bounds",
+     Arg.Set chora_print_depth_bound_wedges,
+     " Print depth bound formulas abstracted to wedges");
   CmdLine.register_config
     ("-chora-dual",
      Arg.Set chora_dual,
