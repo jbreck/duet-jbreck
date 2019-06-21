@@ -1514,6 +1514,7 @@ let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t)
   (* Note: this height variable really represents depth *)
   let set_height_zero = assign_value_to_literal height.value 0 in 
   let increment_height = increment_variable height.value in 
+  let assume_height_non_negative = assume_literal_leq_value 0 height.value in
   let top_graph = ref BURG.empty in
   let dummy_exit_node = ref 0 in (* A dummy exit node representing having finished a base case *)
   List.iter (fun (p_entry,p_exit,pathexpr) ->
@@ -1550,8 +1551,7 @@ let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t)
       match WeightedGraph.path_weight !top_graph p_entry !dummy_exit_node with
       | Weight cycles ->
         let td_summary = K.mul set_height_zero cycles in
-        (* NOTE: if we want to assume H' >= 0, we could do it right here *)
-        (* ... let h_geq_zero = assume_literal_leq_value literal value ... *)
+        let td_summary = K.mul td_summary assume_height_non_negative in
         (* NOTE: if we want to squeeze the top-down summary, we could do it right here *)
         let td_summary = project td_summary in (* FIXME Should I be doing this? *)
         logf ~level:`info "  multi_phi_td%t = [" (proc_name_triple p_entry p_exit);
