@@ -727,8 +727,12 @@ let count_recurrences recurrences =
   Srk.Syntax.Symbol.Map.cardinal recurrences.done_symbols
 
 type term_examination_result = 
-  | DropTerm | DropInequation | UseTerm of Srk.QQ.t * int 
-  | UseTermWithDependency of Srk.QQ.t * int * Srk.Syntax.symbol
+  | DropTerm
+  | DropInequation 
+  | UseInnerTerm of Srk.QQ.t * int 
+  | UseInnerTermWithDependency of Srk.QQ.t * int * Srk.Syntax.symbol
+  | UseSelfOuterTerm of Srk.QQ.t * int 
+  | UseConstantTerm of Srk.QQ.t * int
 
 let build_sub_dim_to_rec_num_map recurrences sub_cs = 
   (* Option 1: build from done_symbols *)
@@ -1121,22 +1125,22 @@ let extract_recurrence_for_symbol
       begin
       if dim == CoordinateSystem.const_id then (* ----------- CONSTANT *)
         (if is_non_negative coeff || allow_decrease
-          then UseTerm (coeff,dim)
+          then UseConstantTerm (coeff,dim)
           else DropTerm)          
       else match CoordinateSystem.destruct_coordinate sub_cs dim with 
       | `App (sym,_) -> 
         if sym == target_outer_sym then (* -------------- TARGET B_OUT *)
           (if is_negative coeff   (* Need upper bound on target symbol *)
-            then UseTerm (coeff,dim)
+            then UseSelfOuterTerm (coeff,dim)
             else DropInequation)
         else if sym == target_inner_sym then (* ---------- TARGET B_IN *)
           (if is_negative coeff
             then DropInequation
-            else UseTerm (coeff,dim))
+            else UseInnerTerm (coeff,dim))
         else if have_recurrence sym recurrences then  (* LOWER STRATUM *)
           (if is_negative coeff
             then DropInequation 
-            else UseTerm (coeff,dim))
+            else UseInnerTerm (coeff,dim))
         else if is_an_inner_symbol sym b_in_b_out_map then
           (* Possible interdependency between variables: we've found
              an inequation relating target_outer_sym, for which we don't
@@ -1146,7 +1150,7 @@ let extract_recurrence_for_symbol
              mutual dependency. *)
           (if is_negative coeff
             then DropInequation
-            else UseTermWithDependency (coeff,dim,sym))
+            else UseInnerTermWithDependency (coeff,dim,sym))
         else 
           DropInequation
         (* The remaining cases involve non-target B_ins or 
@@ -1160,22 +1164,29 @@ let extract_recurrence_for_symbol
     in 
     let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
     let coeffs_and_dims = Srk.Linear.QQVector.enum vec in 
-    let rec examine_coeffs_and_dims accum dep_accum = 
+    let rec examine_coeffs_and_dims accum dep_accum has_outer has_inner = 
       match BatEnum.get coeffs_and_dims with (* Note: "get" consumes an element *)
-      | None -> Some (accum, dep_accum)
+      | None -> 
+        if has_outer && has_inner then Some (accum, dep_accum) else None
       | Some (coeff,dim) -> 
         match process_coeff_dim_pair coeff dim with 
         | DropInequation -> None
-        | DropTerm -> examine_coeffs_and_dims accum dep_accum
-        | UseTerm(new_coeff,new_dim) -> 
-          examine_coeffs_and_dims ((new_coeff,new_dim)::accum) dep_accum
-        | UseTermWithDependency(new_coeff,new_dim,dep_dim) -> 
+        | DropTerm -> examine_coeffs_and_dims 
+            accum dep_accum has_outer has_inner
+        | UseConstantTerm(new_coeff,new_dim) -> examine_coeffs_and_dims 
+            ((new_coeff,new_dim)::accum) dep_accum has_outer has_inner
+        | UseSelfOuterTerm(new_coeff,new_dim) -> examine_coeffs_and_dims 
+            ((new_coeff,new_dim)::accum) dep_accum true      has_inner
+        | UseInnerTerm(new_coeff,new_dim) -> examine_coeffs_and_dims 
+            ((new_coeff,new_dim)::accum) dep_accum has_outer true
+        | UseInnerTermWithDependency(new_coeff,new_dim,dep_dim) -> 
           (if allow_interdependence
-          then examine_coeffs_and_dims ((new_coeff,new_dim)::accum) (dep_dim::dep_accum)
+          then examine_coeffs_and_dims 
+            ((new_coeff,new_dim)::accum) (dep_dim::dep_accum) has_outer true
           else None)
           (* Set this to None to turn off interdependency extraction *)
         in 
-    match examine_coeffs_and_dims [] [] with 
+    match examine_coeffs_and_dims [] [] false false with 
     | None -> ()
     | Some (new_coeffs_and_dims, dep_accum) -> 
       logf ~level:`trace "  Found a possible inequation";
