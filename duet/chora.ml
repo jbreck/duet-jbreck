@@ -730,7 +730,7 @@ type term_examination_result =
   | DropTerm
   | DropInequation 
   | UseInnerTerm of Srk.QQ.t * int 
-  | UseInnerTermWithDependency of Srk.QQ.t * int * Srk.Syntax.symbol
+  | UseInnerTermWithDependency of Srk.QQ.t * int * (Srk.Syntax.symbol list)
   | UseSelfOuterTerm of Srk.QQ.t * int 
   | UseConstantTerm of Srk.QQ.t * int
 
@@ -756,6 +756,29 @@ let build_sub_dim_to_rec_num_map recurrences sub_cs =
     BatMap.Int.empty
     (0 -- (CoordinateSystem.dim sub_cs - 1))
 
+let rec build_polynomial recurrences sub_cs coeff dim = 
+  match CoordinateSystem.destruct_coordinate sub_cs dim with 
+  | `App (sym,_) -> 
+    ((*Format.printf "****BPOLY build_polynomial saw a symbol@.";*)
+     let rec_num = 
+       Srk.Syntax.Symbol.Map.find sym recurrences.done_symbols in
+     let poly = Polynomial.QQXs.of_dim rec_num in 
+     Polynomial.QQXs.scalar_mul coeff poly)
+  | `Mul (x,y) -> 
+    ((*Format.printf "****BPOLY build_polynomial saw a `Mul@.";*)
+     let x_poly = build_vector_dims recurrences sub_cs x in 
+     let y_poly = build_vector_dims recurrences sub_cs y in
+     let poly = Polynomial.QQXs.mul x_poly y_poly in 
+     Polynomial.QQXs.scalar_mul coeff poly)
+  | _ -> failwith "Unrecognized polynomial part in build_polynomial"
+and build_vector_dims recurrences sub_cs inner_vector = 
+  BatEnum.fold 
+    (fun running_poly (coeff,dim) -> 
+       let poly = build_polynomial recurrences sub_cs coeff dim in
+       let poly = Polynomial.QQXs.scalar_mul coeff poly in
+       Polynomial.QQXs.add running_poly poly)
+    Polynomial.QQXs.zero
+    (Srk.Linear.QQVector.enum inner_vector)
 
 let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym 
                      new_coeffs_and_dims blk_transform sub_dim_to_rec_num = 
@@ -797,7 +820,8 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
             blk_transform.(col).(row) <- coeff;
             poly)
         end
-      else (failwith "Unrecognized component of recurrence inequation"))
+      else build_polynomial recurrences sub_cs coeff dim)
+        (* (failwith "Unrecognized component of recurrence inequation")) *)
     const_add_poly
     new_coeffs_and_dims in 
   blk_add_entry;;
@@ -1117,6 +1141,28 @@ let extract_recurrence_for_symbol
   let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
   let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
   (* *) 
+  let rec check_polynomial coeff dim = 
+    if is_negative coeff then (false,[]) else
+    match CoordinateSystem.destruct_coordinate sub_cs dim with 
+    | `App (sym,_) -> 
+            ((*Format.printf "****CHKP check_polynomial saw a symbol@.";*)
+             (*(is_an_inner_symbol sym b_in_b_out_map, [sym]))*)
+             (have_recurrence sym recurrences, [sym]))
+    | `Mul (x,y) -> 
+            ((*Format.printf "****CHKP check_polynomial saw a `Mul@.";*)
+             let x_result, x_deps = check_vector_dims x in 
+             let y_result, y_deps = check_vector_dims y in
+             (x_result && y_result, x_deps @ y_deps))
+    | _ -> (false,[])
+  and check_vector_dims inner_vector = 
+    BatEnum.fold 
+      (fun (running,deps) (coeff,dim) -> 
+          let new_result, new_deps = check_polynomial coeff dim in
+          (running && new_result, deps @ new_deps))
+      (true,[])
+      (Srk.Linear.QQVector.enum inner_vector)
+    in
+  (* *) 
   (* This function is applied to each inequation in sub_wedge *)
   let process_inequation vec negate = 
     (* *) 
@@ -1150,16 +1196,20 @@ let extract_recurrence_for_symbol
              mutual dependency. *)
           (if is_negative coeff
             then DropInequation
-            else UseInnerTermWithDependency (coeff,dim,sym))
+            else UseInnerTermWithDependency (coeff,dim,[sym]))
         else 
           DropInequation
-        (* The remaining cases involve non-target B_ins or 
-          non-trivial terms over the target B_in *)
+        (* The remaining cases involve non-trivial terms over the target B_in *)
         (* We currently do not extract such recurrences *)
         (* In the future, we will change this to allow
             monomials and interdependencies *)
         (* The dual-height analysis will also have to do this differently *)
-      | _ -> DropInequation
+      | _ -> ((*Format.printf "****CHKP Entering check_polynomial@.";*)
+             let new_result, new_deps = check_polynomial coeff dim in
+             (*Format.printf "****CHKP Result was %b@." new_result;*)
+             if new_result then UseInnerTermWithDependency (coeff,dim,new_deps)
+             else DropInequation
+             (*DropInequation*))
       end 
     in 
     let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
@@ -1179,10 +1229,10 @@ let extract_recurrence_for_symbol
             ((new_coeff,new_dim)::accum) dep_accum true      has_inner
         | UseInnerTerm(new_coeff,new_dim) -> examine_coeffs_and_dims 
             ((new_coeff,new_dim)::accum) dep_accum has_outer true
-        | UseInnerTermWithDependency(new_coeff,new_dim,dep_dim) -> 
+        | UseInnerTermWithDependency(new_coeff,new_dim,dep_dims) -> 
           (if allow_interdependence
           then examine_coeffs_and_dims 
-            ((new_coeff,new_dim)::accum) (dep_dim::dep_accum) has_outer true
+            ((new_coeff,new_dim)::accum) (dep_dims @ dep_accum) has_outer true
           else None)
           (* Set this to None to turn off interdependency extraction *)
         in 
@@ -1324,11 +1374,13 @@ let make_extraction_formula
 let make_extraction_wedges
     extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map = 
   (* NOTE: bounding symbols need to have been analyzed for all procedures in the SCC by this point *)
+  let projection_inner_only sym = is_an_inner_symbol sym b_in_b_out_map in
   let projection sym = 
     (*Srk.Syntax.Symbol.Set.mem sym !b_in_symbols*) 
     is_an_inner_symbol sym b_in_b_out_map || 
     Srk.Syntax.Symbol.Set.mem sym b_out_symbols in 
-  let wedge = Wedge.abstract ~exists:projection Cra.srk extraction_formula in 
+  (*let wedge = Wedge.abstract ~exists:projection Cra.srk extraction_formula in*)
+  let wedge = Wedge.abstract ~exists:projection ~subterm:projection Cra.srk extraction_formula in 
   logf ~level:`info "  extraction_wedge = @.%t@." (fun f -> Wedge.pp f wedge); 
   (* CHANGES NEEDED: improve/replace our use of wedge projections *)
   (* For each outer bounding symbol (B_out), project the wedge down to that outer
@@ -1341,7 +1393,8 @@ let make_extraction_wedges
       (*Srk.Syntax.Symbol.Set.mem sym !b_in_symbols*)
       is_an_inner_symbol sym b_in_b_out_map in 
     (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
-    let sub_wedge = Wedge.exists targeted_projection wedge in 
+    (*let sub_wedge = Wedge.exists targeted_projection wedge in*)
+    let sub_wedge = Wedge.exists ~subterm:targeted_projection targeted_projection wedge in 
     Srk.Syntax.Symbol.Map.add target_inner_sym sub_wedge map in 
   let updated_wedge_map = 
     List.fold_left 
