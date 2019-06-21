@@ -1121,8 +1121,8 @@ let extract_recurrence_for_symbol
       begin
       if dim == CoordinateSystem.const_id then (* ----------- CONSTANT *)
         (if is_non_negative coeff || allow_decrease
-          then UseTerm (coeff,dim)      (* Keep non-negative constants *)
-          else DropTerm)                    (* Drop negative constants *)
+          then UseTerm (coeff,dim)
+          else DropTerm)          
       else match CoordinateSystem.destruct_coordinate sub_cs dim with 
       | `App (sym,_) -> 
         if sym == target_outer_sym then (* -------------- TARGET B_OUT *)
@@ -1130,13 +1130,13 @@ let extract_recurrence_for_symbol
             then UseTerm (coeff,dim)
             else DropInequation)
         else if sym == target_inner_sym then (* ---------- TARGET B_IN *)
-          (if is_non_negative coeff
-            then UseTerm (coeff,dim)
-            else DropTerm)
+          (if is_negative coeff
+            then DropInequation
+            else UseTerm (coeff,dim))
         else if have_recurrence sym recurrences then  (* LOWER STRATUM *)
-          (if is_non_negative coeff
-            then UseTerm (coeff,dim) (* Keep non-negative coefficients *)
-            else DropTerm)               (* Drop negative coefficients *)
+          (if is_negative coeff
+            then DropInequation 
+            else UseTerm (coeff,dim))
         else if is_an_inner_symbol sym b_in_b_out_map then
           (* Possible interdependency between variables: we've found
              an inequation relating target_outer_sym, for which we don't
@@ -1144,9 +1144,9 @@ let extract_recurrence_for_symbol
              a recurrence yet.  We'll need to verify later that these
              two variables are part of a strongly connected comoponent of
              mutual dependency. *)
-          (if is_non_negative coeff
-            then UseTermWithDependency (coeff,dim,sym)
-            else DropTerm)
+          (if is_negative coeff
+            then DropInequation
+            else UseTermWithDependency (coeff,dim,sym))
         else 
           DropInequation
         (* The remaining cases involve non-target B_ins or 
