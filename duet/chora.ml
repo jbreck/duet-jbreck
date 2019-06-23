@@ -551,6 +551,33 @@ let to_transition_formula tr =
   in
   (tr_symbols, body)
 
+let to_transition_formula_with_unmodified tr all_vars =
+  let tr_symbols, body = to_transition_formula tr in
+  let tr_symbol_set = List.fold_left (fun s (pre_sym,post_sym) ->
+      Srk.Syntax.Symbol.Set.add pre_sym s)
+    Srk.Syntax.Symbol.Set.empty 
+    tr_symbols
+  in
+  let all_symbols = VarSet.fold (fun v s -> 
+      Srk.Syntax.Symbol.Set.add (Cra.V.symbol_of v) s)
+    all_vars
+    Srk.Syntax.Symbol.Set.empty 
+  in
+  let unmodified_symbols = 
+    Srk.Syntax.Symbol.Set.diff all_symbols tr_symbol_set in
+  let unmodified_inclusive_body = Srk.Syntax.mk_and Cra.srk
+    (body::(List.map 
+      (fun sym -> Srk.Syntax.mk_eq Cra.srk
+        (Srk.Syntax.mk_const Cra.srk sym)
+        (Srk.Syntax.mk_const Cra.srk (post_symbol sym)))
+      (Srk.Syntax.Symbol.Set.elements unmodified_symbols))) in
+  let inclusive_symbols = 
+    Srk.Syntax.Symbol.Set.fold 
+      (fun sym symlist -> (sym, (post_symbol sym))::symlist)
+      unmodified_symbols 
+      tr_symbols in
+  (inclusive_symbols, unmodified_inclusive_body)
+
 let of_transition_formula tr_symbols fmla = 
     let transform =
       List.fold_left (fun tr (pre, post) ->
@@ -620,10 +647,10 @@ let increment_variable value =
       [(Srk.Syntax.mk_const Cra.srk (Cra.V.symbol_of value));
        (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int 1))])
 
-(* PASS REC FLAG IN FROM OUTSIDE *)
-(* Make bound analysis? *)
-let mk_call_abstraction base_case_weight = 
-  let (tr_symbols, body) = to_transition_formula base_case_weight in
+let mk_call_abstraction base_case_weight scc_global_footprint = 
+  (*let (tr_symbols, body) = to_transition_formula base_case_weight in*)
+  let (tr_symbols, body) = 
+      to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
   (*logf ~level:`info "  transition_formula_body: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) body;*)
   let projection x = 
     (* FIXME: THIS IS QUICK AND DIRTY *)
@@ -1960,6 +1987,8 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
     logf ~level:`info " SCC footprint = [";
     VarSet.iter (fun v -> logf ~level:`info "%a;" (Cra.V.pp) v) scc_footprint;
     logf ~level:`info "]@.";
+    let scc_global_footprint = 
+      VarSet.filter (fun v -> Cra.V.is_global v) scc_footprint in 
 
     (* path_weight_internal takes a (src,tgt) pair and 
           a call-mapping function (from the client, 
@@ -2032,7 +2061,7 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
       let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
           let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
-          let bounds = mk_call_abstraction base_case_weight in 
+          let bounds = mk_call_abstraction base_case_weight scc_global_footprint in 
           logf ~level:`info "  call_abstration%t = [" (proc_name_triple p_entry p_exit); 
           print_indented 15 bounds.call_abstraction; logf ~level:`info "  ]";
           IntPairMap.add (p_entry,p_exit) bounds b_map)
