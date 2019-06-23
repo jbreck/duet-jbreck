@@ -14,6 +14,8 @@ module Var = Cra.V
 include Log.Make(struct let name = "chora" end)
 module A = Interproc.MakePathExpr(Cra.K)
 
+module VarSet = BatSet.Make(Cra.V)
+
 (*open Pathexpr*)
 
 (* ---------------------------------- *)
@@ -1930,6 +1932,35 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
               if is_scc_call s t (*is_within_scc (en,ex) *)
               then weight_of_call s t en ex
               else M.find (en, ex) lower_summaries) in
+
+    let transition_footprint tr = 
+      BatEnum.fold 
+        (fun vs (var,term) -> VarSet.add var vs)
+        VarSet.empty 
+        (K.transform tr)
+    in 
+    let scc_footprint = 
+      let var_set_alg = function
+        | `Edge (s, t) ->
+          begin match M.find (s, t) ts.labels with
+            | Call (en, ex) -> 
+              if is_scc_call s t then VarSet.empty
+              else transition_footprint (M.find (en, ex) lower_summaries)
+            | Weight w -> transition_footprint w
+          end
+        | `Mul (x, y) | `Add (x, y) -> VarSet.union x y
+        | `Star x -> x
+        | `Zero | `One -> VarSet.empty
+      in
+      List.fold_left (fun vars (p_entry,p_exit,pathexpr) ->
+          VarSet.union vars (NPathexpr.eval var_set_alg pathexpr))
+        VarSet.empty
+        scc.procs
+    in
+    logf ~level:`info " SCC footprint = [";
+    VarSet.iter (fun v -> logf ~level:`info "%a;" (Cra.V.pp) v) scc_footprint;
+    logf ~level:`info "]@.";
+
     (* path_weight_internal takes a (src,tgt) pair and 
           a call-mapping function (from the client, 
           returning type W.t), and it gives back a W.t for the 
