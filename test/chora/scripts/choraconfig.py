@@ -1,4 +1,4 @@
-import os.path, re, sys
+import os.path, re, sys, subprocess
 
 def makedirs(d) :
     if os.path.exists(d) : return
@@ -201,4 +201,51 @@ def get_default_batch_dict() :
     batch["format_style"] = "assert"
     return batch
 
+############################
+
+def getMostRecentCommitHash(path) :
+    cwd = os.getcwd()
+    try :
+        os.chdir(path)
+        hashcode = subprocess.check_output(["git","rev-parse","HEAD"]).strip()
+    except :
+        hashcode = ""
+    os.chdir(cwd)
+    return hashcode
+
+def getMostRecentCommitDate(path) :
+    "Get the most recent commit date"
+    cwd = os.getcwd()
+    try :
+        os.chdir(path)
+        date = subprocess.check_output(["git","show","-s","--format=%ci"]).strip()
+    except :
+        date = ""
+    os.chdir(cwd)
+    return date
+
+def getMostRecentCommitMessage(path) :
+    "Get the most recent commit message"
+    cwd = os.getcwd()
+    try :
+        os.chdir(path)
+        date = subprocess.check_output(["git","show","-s","--format=%s"]).strip()
+    except :
+        date = ""
+    os.chdir(cwd)
+    return date
+
+def getHostname() :
+    try :
+        hostname = subprocess.check_output(["hostname"]).strip()
+    except :
+        hostname = ""
+    return hostname
+
+def getOpamList() :
+    try :
+        text = subprocess.check_output(["opam","list"]).strip()
+    except :
+        text = ""
+    return text
 

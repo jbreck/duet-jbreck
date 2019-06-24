@@ -210,12 +210,14 @@ class HTMLTable :
 def sort_dir_major(f) : return ( os.path.dirname(f), os.path.basename(f) )
 
 def run(batch, stamp) :
+    oldstamp = datetime.datetime.now().strftime("%Y/%m/%d at %H:%M:%S")
     tools = [choraconfig.get_tool_by_ID(I) for I in batch.get("toolIDs")]
     print "RUN ID=" + stamp
     outroot = choraconfig.testroot + "/output"
     outrun = outroot + "/" + stamp
     runlogpath = outrun + "/run.dat"
     donefile = outrun + "/run_complete.txt"
+    versionfile = outrun + "/version.txt"
     outsources = outrun + "/sources/"
     choraconfig.makedirs(outsources)
     formatting = []
@@ -228,6 +230,16 @@ def run(batch, stamp) :
     with open(formattingpath, "wb") as formatfile :
         for line in formatting :
             print >>formatfile, line
+    vdir = choraconfig.this_script_dir
+    versiontext = ""
+    versiontext += "hostname: " + choraconfig.getHostname() + "\n"
+    versiontext += "\n"
+    versiontext += "revision: " + choraconfig.getMostRecentCommitHash(vdir)
+    versiontext += " (" + choraconfig.getMostRecentCommitDate(vdir) + ")"
+    versiontext += " \"" + choraconfig.getMostRecentCommitMessage(vdir) + "\"\n"
+    versiontext += "\n"
+    versiontext += "opam list output:\n" + choraconfig.getOpamList()
+    with open(versionfile,"wb") as vers : print >>vers, versiontext
     if not batch.hasattr("root"):
         print "ERROR: batch['root'] was not specified"
         return
@@ -340,7 +352,9 @@ def run(batch, stamp) :
 
     newstamp = datetime.datetime.now().strftime("%Y/%m/%d at %H:%M:%S")
     print ""
-    completion = "Run ID=" + stamp + " completed at " + newstamp
+    completion = ("Run ID=" + stamp + 
+                  "; started at " + oldstamp +
+                  "; completed at " + newstamp)
     print completion
     with open(donefile,"wb") as done : print >>done, completion
 
@@ -354,6 +368,11 @@ def format_run(outrun) :
     if not os.path.isdir(outrun) : 
         print "Wasn't a directory: " + outrun
         usage()
+    versionfile = outrun + "/version.txt"
+    try :
+        with open(versionfile, "rb") as vers : versiontext = vers.read().strip()
+    except :
+        versiontext = ""
     formatting = dict()
     formattingpath = outrun + "/formatdata.txt"
     with open(formattingpath, "rb") as formatfile :
@@ -375,6 +394,10 @@ def format_run(outrun) :
     if formatting["style"] in ["rba","assert"] :
         with open(htmlpath,"wb") as html :
             print >>html, "<html>\n<body>"
+
+            print >>html, "<details><summary><font color='blue'>[Version Information]</font></summary><br>"
+            print >>html, "<pre>"+versiontext+"</pre><br>"
+            print >>html, "</details>"
 
             datfile = Datfile(outrun+"/run.dat")
 
