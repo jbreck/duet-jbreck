@@ -478,6 +478,7 @@ end)
 let chora_print_summaries = ref false
 let chora_print_wedges = ref false
 let chora_print_depth_bound_wedges = ref false
+let chora_debug_squeeze = ref false
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
 let chora_fallback = ref false
 
@@ -1600,6 +1601,32 @@ let make_height_based_summaries
     summary_list
     end
 ;;
+
+let squeeze_top_down_formula phi sym = 
+  logf ~level:`always " squeezing depth-bound formula...";
+  let exists x =
+    x = sym ||
+    match Cra.V.of_symbol x with
+    | Some v -> Core.Var.is_global (Cra.var_of_value v)
+    | None -> false
+    (*true*)
+  in
+  match Wedge.symbolic_bounds_formula ~exists Cra.srk phi sym with
+  | `Sat (lower, upper) ->
+    begin match lower with
+      | Some lower ->
+        logf ~level:`always " squeeze: %a <= height" (Syntax.pp_expr_unnumbered Cra.srk) lower
+      | None -> 
+        logf ~level:`always " squeeze: no lower bound on height"
+    end;
+    begin match upper with
+      | Some upper ->
+        logf ~level:`always " squeeze: height <= %a" (Syntax.pp_expr_unnumbered Cra.srk) upper
+      | None ->
+        logf ~level:`always " squeeze: no upper bound on height"
+    end
+  | `Unsat ->
+    logf ~level:`always " squeeze: phi_td is infeasible"
  
 let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t) 
       is_scc_call lower_summaries base_case_map height 
@@ -1655,9 +1682,14 @@ let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t)
           debug_print_depth_wedge td_summary;
           logf ~level:`always "  ]";
         end);
-        let top_down_symbols, top_down_formula = to_transition_formula td_summary in  
+        let top_down_symbols, top_down_formula = to_transition_formula td_summary in
         logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
             (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
+        (if !chora_debug_squeeze then
+          squeeze_top_down_formula top_down_formula (post_symbol height.symbol)
+          (* Note: currently, the above code prints a squeezed version but it doesn't
+               actually use the squeezed version in the summary that gets returned;
+               in the future, we might want it to actually use the squeezed version*));
         IntPairMap.add (p_entry,p_exit) top_down_formula td_formula_map
       | _ -> failwith "A call was found in td_summary")
     IntPairMap.empty procs) in
@@ -2140,6 +2172,10 @@ let _ =
     ("-chora-debug-depth-bounds",
      Arg.Set chora_print_depth_bound_wedges,
      " Print depth bound formulas abstracted to wedges");
+  CmdLine.register_config
+    ("-chora-debug-squeeze",
+     Arg.Set chora_debug_squeeze,
+     " Print 'squeezed' depth bound formula using symbolic_bounds_formula");
   CmdLine.register_config
     ("-chora-dual",
      Arg.Set chora_dual,
