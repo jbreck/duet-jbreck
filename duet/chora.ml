@@ -668,16 +668,22 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
   let bounding_atoms = ref [] in
   let bound_list = ref [] in
   let add_bounding_var vec negate =
-      let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
-      let term = CoordinateSystem.term_of_vec cs vec in 
-      (*logf ~level:`info "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;*)
-    let bounding_var = Core.Var.mk (Core.Varinfo.mk_global "B_in" ( Core.Concrete (Core.Int 32))) in 
-    let bounding_var_sym = Cra.V.symbol_of (Cra.VVal bounding_var) in 
-    (*let bounding_var_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"B_in" `TyInt in *)
-    let bounding_term = Srk.Syntax.mk_const Cra.srk bounding_var_sym in 
-    let bounding_atom = Srk.Syntax.mk_leq Cra.srk term bounding_term in 
-    bounding_atoms := bounding_atom            :: (!bounding_atoms);
-    bound_list     := (bounding_var_sym, term) :: (!bound_list) in
+    let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
+    let term = CoordinateSystem.term_of_vec cs vec in 
+    (*logf ~level:`info "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;*)
+    (* *)
+    (* Hacky Optional Behavior: Ignore CRA's auto-generated array-position and array-width variables *)
+    let name = Srk.Syntax.Term.show Cra.srk term in
+    match String.index_opt name '@' with | Some i -> () | None ->
+    begin
+      let bounding_var = Core.Var.mk (Core.Varinfo.mk_global "B_in" ( Core.Concrete (Core.Int 32))) in 
+      let bounding_var_sym = Cra.V.symbol_of (Cra.VVal bounding_var) in 
+      let bounding_term = Srk.Syntax.mk_const Cra.srk bounding_var_sym in 
+      let bounding_atom = Srk.Syntax.mk_leq Cra.srk term bounding_term in 
+      bounding_atoms := bounding_atom            :: (!bounding_atoms);
+      bound_list     := (bounding_var_sym, term) :: (!bound_list) 
+    end
+  in
   let handle_constraint = function 
     | (`Eq, vec) ->
       (*logf ~level:`info "  rec equation: %a \n" Linear.QQVector.pp vec;*)
@@ -1117,7 +1123,7 @@ let accept_and_build_recurrences
   let foreach_block_build recurrences candidate_block = 
     if List.length candidate_block = 0 then recurrences else
     let nRecurs = List.length candidate_block in 
-    logf ~level:`info "  Beginning to build a block of size: %d" (nRecurs);
+    logf ~level:`trace "  Beginning to build a block of size: %d" (nRecurs);
     let blk_transform = Array.make_matrix nRecurs nRecurs QQ.zero in 
     let foreach_candidate_build add_entries candidate = 
       let sub_dim_to_rec_num = 
@@ -1129,7 +1135,7 @@ let accept_and_build_recurrences
       List.fold_left 
         foreach_candidate_build [] candidate_block in 
     let blk_add = Array.of_list (List.rev add_entries) in (* REV entries to match term_of_id *) 
-    logf ~level:`info "  Registering add block of size: %d" (Array.length blk_add);
+    logf ~level:`trace "  Registering add block of size: %d" (Array.length blk_add);
     register_recurrence blk_transform blk_add recurrences in 
   let recurrences = 
     if not allow_interdependence then 
@@ -1211,11 +1217,21 @@ let extract_recurrence_for_symbol
             else DropInequation)
         else if sym == target_inner_sym then (* ---------- TARGET B_IN *)
           (if is_negative coeff
-            then DropInequation
+            then (if allow_decrease then 
+                  (logf ~level:`info "  Drop negative-term inequation";
+                  DropInequation)
+                  else
+                  (logf ~level:`info "  Drop negative term";
+                  DropTerm))
             else UseInnerTerm (coeff,dim))
         else if have_recurrence sym recurrences then  (* LOWER STRATUM *)
           (if is_negative coeff
-            then DropInequation 
+            then (if allow_decrease then 
+                  (logf ~level:`info "  Drop negative-term inequation";
+                  DropInequation)
+                  else
+                  (logf ~level:`info "  Drop negative term";
+                  DropTerm))
             else UseInnerTerm (coeff,dim))
         else if is_an_inner_symbol sym b_in_b_out_map then
           (* Possible interdependency between variables: we've found
@@ -1425,7 +1441,10 @@ let make_extraction_wedges
     (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
     (*let sub_wedge = Wedge.exists targeted_projection wedge in*)
     let sub_wedge = Wedge.exists ~subterm:targeted_projection targeted_projection wedge in 
-    Srk.Syntax.Symbol.Map.add target_inner_sym sub_wedge map in 
+    (logf ~level:`trace "  sub_wedge_for[%t] = @.%t@." 
+      (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_outer_sym)
+      (fun f -> Wedge.pp f sub_wedge);
+    Srk.Syntax.Symbol.Map.add target_inner_sym sub_wedge map) in 
   let updated_wedge_map = 
     List.fold_left 
       add_wedge_to_map 
@@ -1929,7 +1948,6 @@ let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.sc
  *    back into the current SCC) and non-recursive paths n which never do.
  * *)
 let factor_pair pathexpr is_scc_call edge (alg:NPathexpr.t WeightedGraph.algebra) =
-(*let factor_pair pathexpr is_within_scc edge (alg:NPathexpr.t WeightedGraph.algebra) =*)
   let factor_alg = function
     | `Edge (s, t) -> if is_scc_call s t 
                       then (edge s t, alg.zero)
@@ -1952,6 +1970,23 @@ let factor_pair pathexpr is_scc_call edge (alg:NPathexpr.t WeightedGraph.algebra
     | `One -> (alg.zero, alg.one)
   in
   NPathexpr.eval factor_alg pathexpr
+
+exception HasNonlinearRecursion
+let check_linearity pathexpr is_scc_call =
+  try 
+    let factor_alg = function
+      | `Edge (s, t) -> (is_scc_call s t)
+      | `Add (b1, b2) -> b1 || b2
+      | `Mul (b1, b2) -> if (b1 && b2) 
+                         then raise HasNonlinearRecursion
+                         else (b1 || b2)
+      | `Star b -> if b then raise HasNonlinearRecursion else b
+      | `Zero -> false
+      | `One -> false
+    in
+    (let _ = NPathexpr.eval factor_alg pathexpr in 
+    true)
+  with HasNonlinearRecursion -> false
 
 let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =  
   let program_vars = 
