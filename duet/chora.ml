@@ -1416,19 +1416,17 @@ let make_extraction_formula
   logf ~level:`trace "  extraction_formula: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) extraction_formula;
   extraction_formula (* formerly had a tuple of return values *)
 
+(* Option 1 *)
+(* Old version: put everything through a single wedge first *)
 (* Called once per procedure (per value of allow_decrease) *)
-let make_extraction_wedges
+let make_extraction_wedges_from_one_wedge
     extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map = 
   (* NOTE: bounding symbols need to have been analyzed for all procedures in the SCC by this point *)
-  let projection_inner_only sym = is_an_inner_symbol sym b_in_b_out_map in
   let projection sym = 
-    (*Srk.Syntax.Symbol.Set.mem sym !b_in_symbols*) 
     is_an_inner_symbol sym b_in_b_out_map || 
     Srk.Syntax.Symbol.Set.mem sym b_out_symbols in 
-  (*let wedge = Wedge.abstract ~exists:projection Cra.srk extraction_formula in*)
   let wedge = Wedge.abstract ~exists:projection ~subterm:projection Cra.srk extraction_formula in 
   logf ~level:`info "  extraction_wedge = @.%t@." (fun f -> Wedge.pp f wedge); 
-  (* CHANGES NEEDED: improve/replace our use of wedge projections *)
   (* For each outer bounding symbol (B_out), project the wedge down to that outer
        symbol and all inner bounding symbols *)
   logf ~level:`trace "  Building a wedge map..."; 
@@ -1436,10 +1434,8 @@ let make_extraction_wedges
     let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym b_in_b_out_map in
     let targeted_projection sym = 
       sym == target_outer_sym || 
-      (*Srk.Syntax.Symbol.Set.mem sym !b_in_symbols*)
       is_an_inner_symbol sym b_in_b_out_map in 
     (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
-    (*let sub_wedge = Wedge.exists targeted_projection wedge in*)
     let sub_wedge = Wedge.exists ~subterm:targeted_projection targeted_projection wedge in 
     (logf ~level:`trace "  sub_wedge_for[%t] = @.%t@." 
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_outer_sym)
@@ -1452,6 +1448,46 @@ let make_extraction_wedges
       bounds.bound_pairs in 
   logf ~level:`trace "  Finished wedge map.";
   updated_wedge_map
+
+(* Option 2 *)
+(* New version: make each new wedge from the original formula *)
+(* Called once per procedure (per value of allow_decrease) *)
+let make_extraction_wedges_from_formula
+    extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map = 
+  (* NOTE: bounding symbols need to have been analyzed for all procedures in the SCC by this point *)
+  logf ~level:`info "   Not using extraction_wedge; using formula instead"; 
+  (* For each outer bounding symbol (B_out), project the wedge down to that outer
+       symbol and all inner bounding symbols *)
+  logf ~level:`trace "  Building a wedge map..."; 
+  let add_wedge_to_map map (target_inner_sym, _) = 
+    let target_outer_sym = Srk.Syntax.Symbol.Map.find target_inner_sym b_in_b_out_map in
+    let targeted_projection sym = 
+      sym == target_outer_sym || 
+      is_an_inner_symbol sym b_in_b_out_map in 
+    (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
+    let sub_wedge = Wedge.abstract ~exists:targeted_projection ~subterm:targeted_projection 
+                      Cra.srk extraction_formula in 
+    (logf ~level:`trace "  sub_wedge_for[%t] = @.%t@." 
+      (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_outer_sym)
+      (fun f -> Wedge.pp f sub_wedge);
+    Srk.Syntax.Symbol.Map.add target_inner_sym sub_wedge map) in 
+  let updated_wedge_map = 
+    List.fold_left 
+      add_wedge_to_map 
+      wedge_map
+      bounds.bound_pairs in 
+  logf ~level:`trace "  Finished wedge map.";
+  updated_wedge_map
+
+(* 
+ * Old code from make_extraction_wedges
+  (*let projection_inner_only sym = is_an_inner_symbol sym b_in_b_out_map in*)
+  (* CHANGES NEEDED: improve/replace our use of wedge projections *)
+  (*Srk.Syntax.Symbol.Set.mem sym !b_in_symbols*) 
+  (*let wedge = Wedge.abstract ~exists:projection Cra.srk extraction_formula in*)
+  (*Srk.Syntax.Symbol.Set.mem sym !b_in_symbols*)
+  (*let sub_wedge = Wedge.exists targeted_projection wedge in*)
+ *)
 
 let extract_and_solve_recurrences 
     b_in_b_out_map wedge_map post_height_sym ~allow_decrease = 
@@ -1538,7 +1574,7 @@ let build_wedge_map
       let extraction_formula = 
           IntPairMap.find (p_entry,p_exit) extraction_formula_map in 
       let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
-      make_extraction_wedges
+      make_extraction_wedges_from_formula
         extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map)
     Srk.Syntax.Symbol.Map.empty
     scc.procs in 
@@ -1886,7 +1922,7 @@ let resource_bound_analysis rg query =
 
 let check_assertions rg query main assertions = 
     if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
-    Format.printf "======= Assertion Checking ======\n";
+    logf ~level:`always "======= Assertion Checking ======@.";
     let entry_main = (RG.block_entry rg main).did in
     assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
         let path = BURG.path_weight query entry_main v in
