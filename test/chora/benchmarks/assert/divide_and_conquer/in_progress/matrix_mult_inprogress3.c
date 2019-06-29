@@ -41,19 +41,24 @@ void matMult (int n, int ax, int ay, int bx, int by){
   //   the constant 4 in the additive term below will also change to be
   //   something else.  But, we'll fix that later.
 
-  // -- ADDITIVE TERM
 
+  // -- ADDITIVE TERM
 
   // Note:
   //   One question here is why we can handle (**) but not (*).  This is
   //   an optional, low-priority issue because we actually want to do something
-  //   like what's shown in under "PROBLEM A" below.  I'm guessing that
+  //   like what's shown in under "PRIMARY PROBLEM" below.  I'm guessing that
   //   the reason we can't handle (*) is related to the reason we couldn't
   //   handle the example that Antonio sent us a few months ago, so I was
   //   thinking that Generalized Fourier-Motzkin might help us here.
+
+  // Two options for a model additive term, which I call (**) and (*):
+
   //__cost += n*n;  // can't handle (and is correct) (*)
 
   __cost += 4*m*m;  // can handle (**). goal: replace this with the code below
+
+  // The preferred alternative, which is a more realistic additive term:
 
   // TODO-Z: (PRIMARY PROBLEM) I really wish we could handle something like this
   //   rather than the above line that's marked with a (**)
