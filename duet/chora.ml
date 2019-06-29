@@ -479,6 +479,7 @@ let chora_print_summaries = ref false
 let chora_print_wedges = ref false
 let chora_print_depth_bound_wedges = ref false
 let chora_debug_squeeze = ref false
+let chora_debug_recs = ref false
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
 let chora_fallback = ref false
 
@@ -865,8 +866,8 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
 let is_an_inner_symbol sym b_in_b_out_map = 
   Srk.Syntax.Symbol.Map.mem sym b_in_b_out_map
 
-let log_fmla_proc formatter p_entry p_exit formula = 
-  logf ~level:`info formatter (proc_name_triple p_entry p_exit)
+let log_fmla_proc ?(level=`info) formatter p_entry p_exit formula = 
+  logf ~level formatter (proc_name_triple p_entry p_exit)
       (Srk.Syntax.Formula.pp Cra.srk) formula
 
 let log_tr_proc formatter p_entry p_exit tr = 
@@ -900,7 +901,8 @@ let build_height_based_summary
     p_entry p_exit = 
   (* b_in = 0: In the height-based analysis, initial b_in values equal zero *)
   let solution_starting_at_zero = rename_b_in_to_zero b_in_b_out_map solution in 
-  log_fmla_proc "@.    simplified%t: %a" p_entry p_exit solution_starting_at_zero;
+  let level = if !chora_debug_recs then `always else `info in
+  log_fmla_proc ~level "@.    simplified%t: @.    %a" p_entry p_exit solution_starting_at_zero;
   (* each term <= each b_out:  *)
   let bounding_conjunction = 
     let make_bounding_conjuncts (in_sym,term) =
@@ -1301,7 +1303,8 @@ let extract_recurrence_for_symbol
       begin 
       (* We've identified a recurrence; now we'll put together the data 
         structures we'll need to solve it.  *)
-      logf ~level:`info "  [REC] %a" (Srk.Syntax.Term.pp Cra.srk) term;  
+      let lev = if !chora_debug_recs then `always else `info in
+      logf ~level:lev "  [PRE-REC] %a" (Srk.Syntax.Term.pp Cra.srk) term;  
       logf ~level:`trace "    before filter: %a" Linear.QQVector.pp vec;
       logf ~level:`trace "     after filter: %a" Linear.QQVector.pp new_vec;
       let one_over_outer_coeff = QQ.inverse outer_coeff in 
@@ -1332,7 +1335,8 @@ let make_outer_bounding_symbol
   let lhs = Srk.Syntax.mk_const Cra.srk outer_sym in 
   let rhs = term in 
   let b_out_constraint = Srk.Syntax.mk_leq Cra.srk lhs rhs in (* was: mk_eq *)
-  logf ~level:`info "  [TERM]: %a ~ %t ~ %t " 
+  let lev = if !chora_debug_recs then `always else `info in
+  logf ~level:lev "  [TERM]: %a ~ %t ~ %t " 
     (Srk.Syntax.Term.pp Cra.srk) term
     (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
     (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym);
@@ -1419,6 +1423,7 @@ let make_extraction_formula
 (* Option 1 *)
 (* Old version: put everything through a single wedge first *)
 (* Called once per procedure (per value of allow_decrease) *)
+(*
 let make_extraction_wedges_from_one_wedge
     extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map = 
   (* NOTE: bounding symbols need to have been analyzed for all procedures in the SCC by this point *)
@@ -1426,6 +1431,7 @@ let make_extraction_wedges_from_one_wedge
     is_an_inner_symbol sym b_in_b_out_map || 
     Srk.Syntax.Symbol.Set.mem sym b_out_symbols in 
   let wedge = Wedge.abstract ~exists:projection ~subterm:projection Cra.srk extraction_formula in 
+  (* Wedge.strengthen wedge; (* NOTE: Added just for debugging... *) *)
   logf ~level:`info "  extraction_wedge = @.%t@." (fun f -> Wedge.pp f wedge); 
   (* For each outer bounding symbol (B_out), project the wedge down to that outer
        symbol and all inner bounding symbols *)
@@ -1448,6 +1454,7 @@ let make_extraction_wedges_from_one_wedge
       bounds.bound_pairs in 
   logf ~level:`trace "  Finished wedge map.";
   updated_wedge_map
+*)
 
 (* Option 2 *)
 (* New version: make each new wedge from the original formula *)
@@ -1467,6 +1474,7 @@ let make_extraction_wedges_from_formula
     (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
     let sub_wedge = Wedge.abstract ~exists:targeted_projection ~subterm:targeted_projection 
                       Cra.srk extraction_formula in 
+    (*Wedge.strengthen sub_wedge; (* NOTE: Added just for debugging... *) *)
     (logf ~level:`trace "  sub_wedge_for[%t] = @.%t@." 
       (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_outer_sym)
       (fun f -> Wedge.pp f sub_wedge);
@@ -2247,6 +2255,10 @@ let _ =
     ("-chora-debug-squeeze",
      Arg.Set chora_debug_squeeze,
      " Print 'squeezed' depth bound formula using symbolic_bounds_formula");
+  CmdLine.register_config
+    ("-chora-debug-recs",
+     Arg.Set chora_debug_recs,
+     " Print information about recurrences for non-linear recursion");
   CmdLine.register_config
     ("-chora-dual",
      Arg.Set chora_dual,
