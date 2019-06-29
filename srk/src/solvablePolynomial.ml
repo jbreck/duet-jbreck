@@ -1844,7 +1844,7 @@ end
 let exp_ocrs_external context tr_symbols loop_counter term_of_id 
                       nb_constants blk_transforms blk_adds = 
   (* Send inequations *)
-  (*exp_ocrs context tr_symbols loop_counter 
+  exp_ocrs context tr_symbols loop_counter 
     { nb_constants = nb_constants;
       term_of_id = term_of_id;
       block_eq = [];
@@ -1853,10 +1853,10 @@ let exp_ocrs_external context tr_symbols loop_counter term_of_id
           (fun rest transform add -> {blk_transform = transform; 
                                       blk_add = add}::rest) 
           [] blk_transforms blk_adds
-    }*)
+    }
   (* *)
   (* Send equations *)
-  exp_ocrs context tr_symbols loop_counter 
+  (*exp_ocrs context tr_symbols loop_counter 
     { nb_constants = nb_constants;
       term_of_id = term_of_id;
       block_eq =
@@ -1865,7 +1865,7 @@ let exp_ocrs_external context tr_symbols loop_counter term_of_id
                                       blk_add = add}::rest) 
           [] blk_transforms blk_adds;
       block_leq = []
-    }
+    }*)
 
   
 (*

@@ -1005,7 +1005,7 @@ let build_dual_height_summary
   log_fmla_proc "@.    bd_up conj%t: %a" p_entry p_exit bound_upper;
   (* F8: bound_bridge: 0 <= b_in_up /\ b_in_up <= b_out_low *)
   let bound_bridge = 
-    let make_bridging_conjuncts (in_sym,_) =
+    let make_bridging_conjuncts in_sym =
       let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in
       let up_in_const = Srk.Syntax.mk_const Cra.srk (upper_symbol in_sym) in 
       let low_out_const = Srk.Syntax.mk_const Cra.srk (lower_symbol out_sym) in
@@ -1013,8 +1013,13 @@ let build_dual_height_summary
       Srk.Syntax.mk_and Cra.srk
         [Srk.Syntax.mk_leq Cra.srk zero up_in_const;
          Srk.Syntax.mk_leq Cra.srk up_in_const low_out_const] in
+    let scc_b_in_symbols = 
+      Srk.Syntax.Symbol.Map.fold
+        (fun in_sym _ rest -> in_sym::rest)
+        b_in_b_out_map
+        [] in 
     let bridging_conjuncts = 
-      List.map make_bridging_conjuncts bounds.bound_pairs in 
+      List.map make_bridging_conjuncts scc_b_in_symbols in 
     Srk.Syntax.mk_and Cra.srk bridging_conjuncts in 
   log_fmla_proc "@.    bd_bridge conj%t: %a" p_entry p_exit bound_bridge;
   let first_part = [rb_topdown;rm_topdown;height_eq;height_ineq] in
