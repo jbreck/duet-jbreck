@@ -5,14 +5,18 @@ open Srk
 
 module RG = Interproc.RG
 module G = RG.G
-(*module K = NewtonDomain.ICRASum*)
-module K = Cra.K
+
+(*module K = NewtonDomain.ICRA*)  (* Unbound value K.exists *)
+module K = NewtonDomain.K
+module KK = NewtonDomain.KK
+(*module K = Cra.K*)
+
 module Ctx = NewtonDomain.Ctx
 
 module Var = Cra.V
 
 include Log.Make(struct let name = "chora" end)
-module A = Interproc.MakePathExpr(Cra.K)
+module A = Interproc.MakePathExpr(K)
 
 module VarSet = BatSet.Make(Cra.V)
 
@@ -134,6 +138,875 @@ end
 
 (*     End stuff from old pathexpr    *)
 (* ---------------------------------- *)
+
+
+
+(* ---------------------------------- *)
+(*   Begin stuff from old icraRegexp  *)
+
+module IcraPathExpr = struct
+  open BatHashcons
+
+  type var_t = int * int (* entry and exit verts of procedure *) 
+  
+  type ('a,'b) open_pathexpr = (* Untensored open path expressions *)
+    [ `IDetensor of 'a * 'b
+    | `IProject of 'a
+    | `IVar of var_t              (* A (possibly indirectly) recursive procedure call *)
+    | `IConstantEdge of int * int (* NOTE: Only use this for non-recursive edges!! *)
+    | `IMul of 'a * 'a
+    | `IAdd of 'a * 'a
+    | `IStar of 'a
+    | `IZero
+    | `IOne ]
+ 
+  type ('a,'b) open_pathexprT = (* Tensored open path expressions *)
+    [ `ITensor of 'a * 'a
+    | `IProjectT of 'b
+    | `IMulT of 'b * 'b 
+    | `IAddT of 'b * 'b
+    | `IStarT of 'b
+    | `IZeroT
+    | `IOneT ]
+
+  type ('a,'b) algebra = (('a,'b) open_pathexpr -> 'a) * (('a,'b) open_pathexprT -> 'b)
+  
+  type pe =                      (* Untensored path expressions *)
+    | IDetensor of t * tT
+    | IProject of t
+    | IVar of var_t              (* A (possibly indirectly) recursive procedure call *)
+    | IConstantEdge of int * int (* NOTE: Only use this for non-recursive edges!! *)
+    | IMul of t * t
+    | IAdd of t * t
+    | IStar of t
+    | IOne
+    | IZero
+  and t = pe hobj
+  and peT =                      (* Tensored path expressions *)
+    | ITensor of t * t
+    | IProjectT of tT
+    | IMulT of tT * tT
+    | IAddT of tT * tT
+    | IStarT of tT
+    | IOneT
+    | IZeroT
+  and tT = peT hobj
+  ;;
+
+  module HC = BatHashcons.MakeTable(struct
+    type t = pe
+    let equal x y = match x, y with
+      | IDetensor (u, t), IDetensor (u', t') -> u.tag = u'.tag && t.tag = t'.tag
+      | IProject s, IProject s' -> s.tag = s'.tag
+      | IVar (s,t), IVar(s',t') -> s = s' && t = t'
+      | IConstantEdge (s, t), IConstantEdge (s', t') -> s = s' && t = t'
+      | IMul (s, t), IMul (s', t') -> s.tag = s'.tag && t.tag = t'.tag
+      | IAdd (s, t), IAdd (s', t') -> s.tag = s'.tag && t.tag = t'.tag
+      | IStar s, IStar s' -> s.tag = s'.tag
+      | IOne, IOne -> true
+      | IZero, IZero -> true
+      | _ -> false
+    let hash = function
+      | IDetensor (u, t) -> Hashtbl.hash (0, u.tag, t.tag)
+      | IProject x -> Hashtbl.hash (1, x.tag)
+      | IVar (s,t) -> Hashtbl.hash (2, s, t)
+      | IConstantEdge (x, y) -> Hashtbl.hash (3, x, y)
+      | IMul (x, y) -> Hashtbl.hash (4, x.tag, y.tag)
+      | IAdd (x, y) -> Hashtbl.hash (5, x.tag, y.tag)
+      | IStar x -> Hashtbl.hash (6, x.tag)
+      | IOne -> Hashtbl.hash 7
+      | IZero -> Hashtbl.hash 8
+  end)
+
+  module HCT = BatHashcons.MakeTable(struct
+    type t = peT
+    let equal x y = match x, y with
+      | ITensor (s, t), ITensor (s', t') -> s.tag = s'.tag && t.tag = t'.tag
+      | IProjectT s, IProjectT s' -> s.tag = s'.tag
+      | IMulT (s, t), IMulT (s', t') -> s.tag = s'.tag && t.tag = t'.tag
+      | IAddT (s, t), IAddT (s', t') -> s.tag = s'.tag && t.tag = t'.tag
+      | IStarT s, IStarT s' -> s.tag = s'.tag
+      | IOneT, IOneT -> true
+      | IZeroT, IZeroT -> true
+      | _ -> false
+    let hash = function
+      | ITensor (u, t) -> Hashtbl.hash (0, u.tag, t.tag)
+      | IProjectT x -> Hashtbl.hash (1, x.tag)
+      | IMulT (x, y) -> Hashtbl.hash (2, x.tag, y.tag)
+      | IAddT (x, y) -> Hashtbl.hash (3, x.tag, y.tag)
+      | IStarT x -> Hashtbl.hash (4, x.tag)
+      | IOneT -> Hashtbl.hash 5
+      | IZeroT -> Hashtbl.hash 6
+  end)
+
+  module HT = BatHashtbl.Make(struct
+      type t = pe hobj
+      let equal s t = s.tag = t.tag
+      let hash t = t.hcode
+    end)
+
+  module HTT = BatHashtbl.Make(struct
+      type t = peT hobj
+      let equal s t = s.tag = t.tag
+      let hash t = t.hcode
+    end)
+
+  type context = { uctx : HC.t; 
+                   tctx : HCT.t; }
+
+  type ('a,'b) table = { utbl : 'a HT.t; 
+                         ttbl : 'b HTT.t; }
+
+  let mk_one ctx = HC.hashcons ctx.uctx IOne
+  let mk_zero ctx = HC.hashcons ctx.uctx IZero
+  let mk_detensor ctx u t = match u.obj, t.obj with
+    | IZero, _ -> mk_zero ctx
+    | _, IZeroT -> mk_zero ctx
+    | _, IOneT -> u
+    | _, _ -> (HC.hashcons ctx.uctx (IDetensor (u,t)));;
+  let mk_project ctx x = match x.obj with  
+    | IZero -> mk_zero ctx
+    | IOne -> mk_one ctx
+    | _ -> HC.hashcons ctx.uctx (IProject x)
+  let mk_mul ctx x y = match x.obj, y.obj with
+    | IZero, _ -> mk_zero ctx
+    | _, IZero -> mk_zero ctx
+    | IOne, _ -> y
+    | _, IOne -> x
+    | _, _ -> HC.hashcons ctx.uctx (IMul (x, y))
+  let mk_add ctx x y = match x.obj, y.obj with
+    | IZero, _ -> y
+    | _, IZero -> x
+    | _, _ -> HC.hashcons ctx.uctx (IAdd (x, y))
+  let mk_star ctx x = match x.obj with
+    | IZero -> mk_one ctx
+    | IOne -> mk_one ctx
+    (* Could add (1+x)* rules here *)
+    | _ -> HC.hashcons ctx.uctx (IStar x)
+  let mk_constant_edge ctx src tgt = HC.hashcons ctx.uctx (IConstantEdge (src, tgt))
+  let mk_var ctx src tgt = HC.hashcons ctx.uctx (IVar (src, tgt))
+
+  let mk_oneT ctx = HCT.hashcons ctx.tctx IOneT
+  let mk_zeroT ctx = HCT.hashcons ctx.tctx IZeroT
+  let mk_tensor ctx x y = match x.obj, y.obj with
+    | IZero, _ -> mk_zeroT ctx
+    | _, IZero -> mk_zeroT ctx
+    | IOne, IOne -> mk_oneT ctx
+    | _, _ -> HCT.hashcons ctx.tctx (ITensor (x, y))
+  let mk_projectT ctx x = match x.obj with  
+    | IZeroT -> mk_zeroT ctx
+    | IOneT -> mk_oneT ctx
+    | _ -> HCT.hashcons ctx.tctx (IProjectT x)
+  let rec mk_mulT ctx x y = match x.obj, y.obj with (* FIXME Make sure I don't make mul backwards somehow *)
+    | IZeroT, _ -> mk_zeroT ctx
+    | _, IZeroT -> mk_zeroT ctx
+    | IOneT,  _ -> y
+    | _, IOneT -> x
+  (*| ITensor(w,x), ITensor(y,z) -> mk_tensor ctx (mk_mul ctx y w) (mk_mul ctx x z)
+    | IMulT(d,ITensor(w,x)), ITensor(y,z) -> mk_mulT ctx d (mk_tensor ctx (mk_mul ctx y w) (mk_mul ctx x z))
+    | ITensor(w,x), IMulT(ITensor(y,z),c) -> mk_mulT ctx (mk_tensor ctx (mk_mul ctx y w) (mk_mul ctx x z)) c *)
+    | _, _ -> HCT.hashcons ctx.tctx (IMulT (x, y))
+  let mk_addT ctx x y = match x.obj, y.obj with
+    | IZeroT, _ -> y
+    | _, IZeroT -> x
+    | _, _ -> HCT.hashcons ctx.tctx (IAddT (x, y))
+  let rec mk_starT ctx x = match x.obj with
+    | IZeroT -> mk_oneT ctx
+    | IOneT -> mk_oneT ctx
+    (* Could add (1+x)* rules here *)
+    | _ -> HCT.hashcons ctx.tctx (IStarT x)
+
+  let rec pp formatter pathexpr =
+    let open Format in
+    match pathexpr.obj with
+    | IDetensor (u, t) -> fprintf formatter "@[[[%a] |>< [%a]]@]" pp u ppT t
+    | IVar (s, t) -> fprintf formatter "@[Var[%d,%d]@]" s t 
+    | IProject x -> fprintf formatter "@[Proj[%a]@]" pp x
+    | IConstantEdge (x, y) -> fprintf formatter "@[%d->%d@]" x y
+    | IMul (x, y) -> fprintf formatter "@[(%a)@ . (%a)@]" pp x pp y
+    | IAdd (x, y) -> fprintf formatter "@[%a@ + %a@]" pp x pp y
+    | IStar x -> fprintf formatter "@[(%a)*@]" pp x
+    | IZero -> fprintf formatter "0"
+    | IOne -> fprintf formatter "1"
+  and ppT formatter pathexpr =
+    let open Format in
+    match pathexpr.obj with
+    | ITensor (x, y) -> fprintf formatter "@[[[%a] (.) [%a]]@]" pp x pp y
+    | IProjectT x -> fprintf formatter "@[ProjT[%a]@]" ppT x
+    | IMulT (x, y) -> fprintf formatter "@[(%a)@ .T (%a)@]" ppT x ppT y
+    | IAddT (x, y) -> fprintf formatter "@[%a@ +T %a@]" ppT x ppT y
+    | IStarT x -> fprintf formatter "@[(%a)*T @]" ppT x
+    | IZeroT -> fprintf formatter "0T"
+    | IOneT -> fprintf formatter "1T"
+  
+  let mk_table ?(size=991) () = { utbl = HT.create size; ttbl = HTT.create size }
+  let mk_context ?(size=991) () = { uctx = HC.create size; tctx = HCT.create size }
+ 
+
+  let evaluators table (ff : ('a,'b) algebra) =
+    let (f,fT) = ff in 
+    let rec go expr =
+      if HT.mem table.utbl expr then
+        HT.find table.utbl expr
+      else
+        let result =
+          match expr.obj with
+          | IDetensor (u,t) -> f (`IDetensor (go u, goT t))
+          | IProject x -> f (`IProject (go x))
+          | IVar v -> f (`IVar v)
+          | IConstantEdge (s, t) -> f (`IConstantEdge (s, t)) 
+          | IMul (x, y) -> f (`IMul (go x, go y))
+          | IAdd (x, y) -> f (`IAdd (go x, go y))
+          | IStar x -> f (`IStar (go x))
+          | IOne -> f `IOne
+          | IZero -> f `IZero
+        in
+        HT.add table.utbl expr result;
+        result
+    and goT expr =
+      if HTT.mem table.ttbl expr then
+        HTT.find table.ttbl expr
+      else
+        let result =
+          match expr.obj with
+          | ITensor (x,y) -> fT (`ITensor (go x, go y))
+          | IProjectT x -> fT (`IProjectT (goT x))
+          | IOneT -> fT `IOneT
+          | IZeroT -> fT `IZeroT
+          | IMulT (x, y) -> fT (`IMulT (goT x, goT y))
+          | IAddT (x, y) -> fT (`IAddT (goT x, goT y))
+          | IStarT x -> fT (`IStarT (goT x))
+        in
+        HTT.add table.ttbl expr result;
+        result
+    in (go, goT)
+
+  let eval ?(table={utbl=HT.create 991;ttbl=HTT.create 991}) 
+           (ff : ('a,'b) algebra) =
+      let (go,_) = evaluators table ff in go
+
+  let evalT ?(table={utbl=HT.create 991;ttbl=HTT.create 991}) 
+           (ff : ('a,'b) algebra) =
+      let (_,goT) = evaluators table ff in goT
+
+  let forget table pce pv =
+    let safe_pair = 
+      ((function
+        | `IDetensor (u,t) -> u && t
+        | `IProject x -> x
+        | `IVar v -> pv v 
+        | `IConstantEdge (s, t) -> pce s t
+        | `IMul (x, y) -> x && y
+        | `IAdd (x, y) -> x && y
+        | `IStar x -> x
+        | `IZero -> true
+        | `IOne -> true), 
+       (function 
+        | `ITensor (x,y) -> x && y
+        | `IProjectT x -> x
+        | `IMulT (x, y) -> x && y
+        | `IAddT (x, y) -> x && y
+        | `IStarT x -> x
+        | `IZeroT -> true
+        | `IOneT -> true))
+    in
+    HT.filteri_inplace (fun k _ -> (eval safe_pair) k) table.utbl;
+    HTT.filteri_inplace (fun k _ -> (evalT safe_pair) k) table.ttbl
+
+
+  (* Note: the factoring and substitution operations below bypass memoization *)
+  let rec factorAux ctx x ehc =
+    let e = ehc.obj in
+    match e with
+    | IOne -> ((mk_one ctx), (mk_zeroT ctx))
+    | IVar v -> if (v = x) then ((mk_zero ctx), (mk_oneT ctx)) else (ehc, (mk_zeroT ctx))
+    | IZero -> ((mk_zero ctx), (mk_zeroT ctx))
+    | IConstantEdge (vs,vt) -> (ehc, (mk_zeroT ctx))
+    | IProject child ->
+      let u, t = (factorAux ctx x child) in
+      (mk_project ctx u, mk_projectT ctx t)
+    | IAdd (lChild, rChild) ->
+      let lu,lt = (factorAux ctx x lChild) in
+      let ru,rt = (factorAux ctx x rChild) in
+              ((mk_add ctx lu ru), (mk_addT ctx lt rt))
+    | IMul (lChild, rChild) ->
+      let lu,lt = (factorAux ctx x lChild) in
+      let ru,rt = (factorAux ctx x rChild) in
+              ((mk_mul ctx lu ru)
+               ,
+               (mk_addT ctx  
+                 (mk_mulT ctx lt (mk_tensor ctx (mk_one ctx) ru))
+                 (mk_mulT ctx rt (mk_tensor ctx lChild (mk_one ctx)))))
+    | IStar (child) -> (ehc, (mk_zeroT ctx))
+    | IDetensor (uChild,tChild) ->
+      let uu,ut = (factorAux ctx x uChild) in
+          ((mk_detensor ctx uu tChild),
+           (mk_mulT ctx ut tChild))
+  
+  (*  Given a variable x and a regular expression e, *)
+  (*   produce a new expression ( u \detensorproduct t* ) *)
+  let isolate ctx x e =
+    let uhc, thc = factorAux ctx x e in
+    mk_detensor ctx uhc (mk_starT ctx thc)
+  
+  (*  ---- general substitution functions ---- *)
+  
+  (*  Substitute s for x in e *)
+  let rec subst ctx s x ehc =
+    let e = ehc.obj in
+    match e with
+    | IDetensor (uChild,tChild) -> mk_detensor ctx (subst ctx s x uChild) (substT ctx s x tChild)
+    | IProject (child) -> mk_project ctx (subst ctx s x child)
+    | IVar v -> 
+        let (xa,xb) = x in 
+        let (va,vb) = v in 
+        Printf.printf " Subst checking (%d,%d) against (%d,%d)\n" xa xb va vb;
+        if (x = v) then s else ehc
+    | IConstantEdge (vs,vt) -> ehc
+    | IAdd (lChild, rChild) -> mk_add ctx (subst ctx s x lChild) (subst ctx s x rChild)
+    | IMul (lChild, rChild) -> mk_mul ctx (subst ctx s x lChild) (subst ctx s x rChild)
+    | IStar (child) -> mk_star ctx (subst ctx s x child)
+    | IZero -> ehc
+    | IOne -> ehc
+  
+  (*  Substitute s for the variable x in e, where x is interpreted as the number *)
+  (*    of some untensored variable, so, we will not substitute for occurrences of *)
+  (*    the tensored variable with numbre x. *)
+  and substT ctx s x ehc =
+    let e = ehc.obj in
+    match e with
+    | IProjectT (child) -> mk_projectT ctx (substT ctx s x child)
+    | IAddT (lChild, rChild) -> mk_addT ctx (substT ctx s x lChild) (substT ctx s x rChild)
+    | IMulT (lChild, rChild) -> mk_mulT ctx (substT ctx s x lChild) (substT ctx s x rChild)
+    | IStarT (child) -> mk_starT ctx (substT ctx s x child)
+    | ITensor (lChild,rChild) -> mk_tensor ctx (subst ctx s x lChild) (subst ctx s x rChild)
+    | IZeroT -> ehc
+    | IOneT -> ehc
+  
+(* 
+  let rec pp formatter pathexpr =
+    let open Format in
+    match pathexpr.obj with
+    | IEdge (x, y) -> fprintf formatter "@[%d->%d@]" x y
+    | IMul (x, y) -> fprintf formatter "@[(%a)@ . (%a)@]" pp x pp y
+    | IAdd (x, y) -> fprintf formatter "@[%a@ + %a@]" pp x pp y
+    | IStar x -> fprintf formatter "@[(%a)*@]" pp x
+    | IZero -> fprintf formatter "0"
+    | IOne -> fprintf formatter "1"
+  
+  let mk_table ?(size=991) () = HT.create size      
+  let mk_context ?(size=991) () = HC.create size
+  
+  let eval 
+      ?(table=HT.create 991) 
+      ?(tableT=HT.create 991) 
+      (f : 'a open_pathexpr -> 'a) 
+      (fT : 'b open_pathexprT -> 'b) =
+    let rec go expr =
+      if HT.mem table expr then
+        HT.find table expr
+      else
+        let result =
+          match expr.obj with
+          | IOne -> f `IOne
+          | IZero -> f `IZero
+          | IMul (x, y) -> f (`IMul (go x, go y))
+          | IAdd (x, y) -> f (`IAdd (go x, go y))
+          | IStar x -> f (`IStar (go x))
+          | IEdge (s, t) -> f (`IEdge (s, t)) 
+        in
+        HT.add table expr result;
+        result
+    and goT expr =
+      if HTT.mem tableT expr then
+        HTT.find tableT expr
+      else
+        let result =
+          match expr.obj with
+          | IOneT -> f `IOneT
+          | IZeroT -> f `IZeroT
+          | IMulT (x, y) -> f (`IMulT (go x, go y))
+          | IAddT (x, y) -> f (`IAddT (go x, go y))
+          | IStarT x -> f (`IStarT (go x))
+          | IEdgeT (s, t) -> f (`IEdgeT (s, t)) 
+        in
+        HTT.add tableT expr result;
+        result
+    in
+    go
+ 
+  (*
+  let forget table p =
+    let safe = eval (function
+        | `IOne | `IZero -> true
+        | `IEdge (s, t) -> p s t
+        | `IMul (x, y) | `IAdd (x, y) -> x && y
+        | `IStar x -> x)
+    in
+    HT.filteri_inplace (fun k _ -> safe k) table
+  *)
+*)
+
+(*
+  (* ----------------------- *)
+
+  (* The following stuff in this module was copied and modified
+   * from ICRA's source code. *)
+
+  type regExp =
+      | IZero
+      | IOne
+      | IVar of int
+      | IEdge of int * int
+      | IProject of regExp
+      | IPlus of regExp * regExp
+      | IDot of regExp * regExp
+      | IKleene of regExp (* had an int unique key for this star *)
+      | IDetensor of regExp * regExpT
+  
+  and regExpT =
+      | IZeroT
+      | IOneT
+      | IVarT of int
+      | IProjectT of regExpT
+      | IPlusT of regExpT * regExpT
+      | IDotT of regExpT * regExpT
+      | IKleeneT of regExpT (* had an int unique key for this star *)
+      | ITensor of regExp * regExp
+  ;;
+  
+  (* ---- external functions ---- *)
+  (* These functions are defined externally (in C) and are called in this OCaml file. *)
+  
+  (*
+  external evalIKleeneSemElemT : weight -> int -> weight = "IRE_evalIKleeneSemElemT"
+  external evalIKleeneSemElem : weight -> int -> weight = "IRE_evalIKleeneSemElem"
+  external evalIPlusSemElemT : weight -> weight -> weight = "IRE_evalIPlusSemElemT"
+  external evalIPlusSemElem : weight -> weight -> weight = "IRE_evalIPlusSemElem"
+  external evalIDotSemElemT : weight -> weight -> weight = "IRE_evalIDotSemElemT"
+  external evalIDotSemElem : weight -> weight -> weight = "IRE_evalIDotSemElem"
+  external evalIProjectSemElemT : weight -> weight = "IRE_evalIProjectSemElemT"
+  external evalIProjectSemElem : weight -> weight = "IRE_evalIProjectSemElem"
+  external evalIVarSemElem : int -> weight = "IRE_evalIVarSemElem"
+  external evalIVarSemElemT : int -> weight = "IRE_evalIVarSemElemT"
+  external evalITensor : weight -> weight -> weight = "IRE_evalITensor"
+  external getIZeroTWt :  unit -> weight = "IRE_getIZeroTWt"
+  external getIOneTWt :  unit  -> weight = "IRE_getIOneTWt"
+  external getIZeroWt :  unit  -> weight = "IRE_getIZeroWt"
+  external detensor : weight -> weight = "IRE_detensor"
+  external getIOneWt :  unit  -> weight = "IRE_getIOneWt"
+  external printWrappedIEdge : weight -> int -> unit = "IRE_printWrappedIEdge"
+  *)
+  
+  let mkIOne () = IOne;;
+  let mkIZero () = IZero;;
+  
+  (*  ---- cache stuff for evaluation functions ---- *)
+ 
+  (*
+  let debugEvalCacheLogging = ref false;;
+  
+  let debugEvalCache s = if !debugEvalCacheLogging then (printf s; flush stdout) else ();;
+  
+  let evalCache = Hashtbl.create 100000;;
+  let evalTCache = Hashtbl.create 100000;;
+  
+  let clearEvalCaches () =
+      debugEvalCache "cache CLEARED for both eval U and T\n";
+      Hashtbl.clear evalCache;
+      Hashtbl.clear evalTCache
+  ;;*)
+  
+  (*  ---- non-simplifying construction functions (for debugging only) ---- *)
+  (* ALSO CHANGE BACK THE LET REC BELOW *)
+  (*
+  let mkIVar a = IVar(a);;
+  let mkIEdge a = IEdge(a);;
+  let mkIProject c = IProject(c);;
+  let mkIPlus a b = IPlus(a, b);;
+  let mkIDot a b = IDot(a, b);;
+  let mkIDetensor a b = IDetensor(a, b);;
+  let mkIKleene a = IKleene(a);;
+  let mkIVarT a = IVarT(a);;
+  let mkIProjectT c = IProjectT(c);;
+  let mkIPlusT a b = IPlusT(a, b);;
+  let mkIDotT a b = IDotT(a, b);;
+  let mkIKleeneT a = IKleeneT(a);;
+  let mkITensor a b = ITensor(a,b);;
+  *)
+  (* ---- regExp simplifying constructors ---- *)
+  
+  let mkIVar a =
+      IVar(a)
+  ;;
+  let mkIEdge s t =
+      IEdge(s,t)
+  ;;
+  let mkIProject c =
+    match c with
+      | IZero -> IZero
+      | IOne -> IOne
+      (*| IEdge(w) -> IEdge (evalIProjectSemElem w)*)
+      | _ -> IProject(c)
+  ;;
+  let rec mkIPlus a b =
+    match a, b with
+      |  IZero, d -> d
+      |  c, IZero -> c
+      (*|  IEdge(w1), IEdge(w2) -> IEdge (evalIPlusSemElem w1 w2)*)
+      |  IPlus(d,IEdge(w1)),IEdge(w2) -> mkIPlus d (mkIPlus (IEdge w1) (IEdge w2))
+      |  IEdge(w1),IPlus(IEdge(w2),c) -> mkIPlus (mkIPlus (IEdge w1) (IEdge w2)) c
+      |  c, d -> IPlus(c,d) (* when clause for idempotence? *)
+  ;;
+  let rec mkIDot a b =
+    match a, b with
+      |  IZero, _ -> IZero
+      |  _, IZero -> IZero
+      |  IOne, d -> d
+      |  c, IOne -> c
+      (*|  IEdge(w1), IEdge(w2) -> IEdge (evalIDotSemElem  w1 w2)*)
+      |  IDot(d,IEdge(s1,t1)),IEdge(s2,t2) -> mkIDot d (mkIDot (IEdge (s1,t1)) (IEdge (s2,t2)))
+      |  IEdge(s1,t1),IDot(IEdge(s1,t1),c) -> mkIDot (mkIDot (IEdge (s1,t1)) (IEdge (s2,t2))) c
+      |  c, d -> IDot(c, d)
+  ;;
+  let rec mkIKleene a =
+    match a with
+      | IZero -> IOne
+      | IOne -> IOne
+      (*| IEdge w -> IEdge(evalIKleeneSemElem w 0)*)
+      | IPlus (IOne,b) -> mkIKleene b
+      | IPlus (b,IOne) -> mkIKleene b
+      | IKleene (e) -> a (*  IKleene-star is idempotent: e** = e* *)
+      | _ -> IKleene(a) 
+  
+  ;;
+  (*  regExpT simplifying constructors -------------------------- *)
+  
+  let mkIVarT a =
+      IVarT(a)
+  ;;
+  let mkIProjectT c =
+    match c with
+      | IZeroT -> IZeroT
+      | IOneT -> IOneT
+      | _ -> IProjectT c
+  ;;
+  let mkIPlusT a b =
+    match a, b with
+      |  IZeroT, d -> d
+      |  c, IZeroT -> c
+      |  c, d -> IPlusT(c,d)
+  ;;
+  let mkITensor a b =
+    match a, b with
+      |  IZero, d -> IZeroT
+      |  c, IZero -> IZeroT
+      |  IOne, IOne -> IOneT
+      |  c, d -> ITensor(c,d)
+  ;;
+  let rec mkIDotT a b =
+    match a, b with
+      |  IZeroT, _ -> IZeroT
+      |  _, IZeroT -> IZeroT
+      |  IOneT, d -> d
+      |  c, IOneT -> c
+      |  ITensor(w,x), ITensor(y,z) ->
+          mkITensor (mkIDot y w) (mkIDot x z)
+      |  IDotT(d,ITensor(w,x)),ITensor(y,z) ->
+          mkIDotT d (mkITensor (mkIDot y w) (mkIDot x z))
+      |  ITensor(w,x),IDotT(ITensor(y,z),c) ->
+          mkIDotT (mkITensor (mkIDot y w) (mkIDot x z)) c
+      |  c, d -> IDotT(c,d)
+  ;;
+  let rec mkIKleeneT a =
+    match a with
+      | IZeroT -> IOneT
+      | IOneT -> IOneT
+      | IPlusT (IOneT,b) -> mkIKleeneT b
+      | IPlusT (b,IOneT) -> mkIKleeneT b
+      | IKleeneT (e) -> a (*  IKleene-star is idempotent: e** = e* *)
+      | _ -> IKleeneT(a)
+  ;;
+  
+  (* mutually recursive simplifying constructors : *)
+  
+  let rec mkIDetensor a b =
+    match a, b with
+      |  IZero, _ -> IZero
+      |  _, IZeroT -> IZero
+      |  u, IOneT -> u
+      (*|  IEdge(wu), ITensor(IEdge(wl),IEdge(wr)) ->
+          let evalUChild = evalRegExp a and
+              evalTChild = evalT b in
+          let oneITensorU = evalITensor (getIOneWt ()) evalUChild
+          in IEdge (detensor (evalIDotSemElemT oneITensorU evalTChild))*)
+      |  u, t -> IDetensor(u, t)
+  
+  (*  ---- evaluation functions ---- *)
+  
+  (*  Note: This version of eval does not take an assignment as a parameter; *)
+  (*    instead, it expects the client to provide an implementation of *)
+  (*    evalIVarSemElem(v), which is expected to know how to retrieve values from *)
+  (*    the desired assignment, perhaps by looking up the variable number in a *)
+  (*    global assignment variable. *)
+  
+  (* ALSO CHANGE THIS LET REC: *)
+  (*
+  let rec
+  *)
+  (*
+  and evalRegExp e =
+      try let w = Hashtbl.find evalCache e in (debugEvalCache "cache HIT  in eval U cache\n"; w)
+      with Not_found -> (let w = evalRegExpCacheMiss e in
+                         Hashtbl.add evalCache e w;
+                         debugEvalCache "cache MISS in eval U cache\n";
+                         w)
+  
+  and evalRegExpCacheMiss e =
+    match e with
+      | IVar v -> evalIVarSemElem v
+      | IZero -> getIZeroWt ()
+      | IOne -> getIOneWt ()
+      | IEdge weight -> weight
+      | IProject(child) ->
+        let evalChild = evalRegExp child
+        in  evalIProjectSemElem evalChild
+      | IPlus(lChild, rChild) ->
+        let evalLChild = evalRegExp lChild and
+            evalRChild = evalRegExp rChild
+        in evalIPlusSemElem evalLChild evalRChild
+      | IDot(lChild, rChild) ->
+        let evalLChild = evalRegExp lChild and
+            evalRChild = evalRegExp rChild
+        in evalIDotSemElem evalLChild evalRChild
+      | IKleene(child,starKey) ->
+        let evalchild = evalRegExp child
+        in evalIKleeneSemElem evalchild starKey
+      | IDetensor(uChild,tChild) ->
+  (*  Note: We could have a callback for evalIDetensor in the future. *)
+  (*  IDEA: return IDetensorTranspose(IDotT(ITensor(IOne(),u),t)) *)
+        let evalUChild = evalRegExp uChild and
+            evalTChild = evalT tChild in
+        let oneITensorU = evalITensor (getIOneWt ()) evalUChild
+        in detensor (evalIDotSemElemT oneITensorU evalTChild)
+  
+  (*  Note: This version of eval does not take an assignment as a parameter; *)
+  (*    instead, it expects the client to provide an implementation of *)
+  (*    evalIVarSemElemT(v), which is expected to know how to retrieve values from *)
+  (*    the desired assignment, perhaps by looking up the variable number v in a *)
+  (*    global assignment variable.  However, in the Newton-CRA usage of this *)
+  (*    function, there were no tensored variables, so evalIVarSemElemT was never *)
+  (*    used.  However, this function does call evalRegExp, which has an analogous *)
+  (*    issue, and the analogous callback function evalIVarSemElem(v) was used. *)
+  
+  and evalT e =
+      try let w = Hashtbl.find evalTCache e in (debugEvalCache "cache HIT  in eval T cache\n"; w)
+      (*try Hashtbl.find evalTCache e  *)
+      with Not_found -> (let w = evalTCacheMiss e in
+                         Hashtbl.add evalTCache e w;
+                         debugEvalCache "cache MISS in eval T cache\n";
+                         w)
+  
+  and evalTCacheMiss e =
+    match e with
+      | IVarT v -> evalIVarSemElemT v
+  (* placeholder, should never be evaluated due to our *)
+  (*   use case of evalT - there are no varT types *)
+      | IZeroT -> getIZeroTWt ()
+      | IOneT -> getIOneTWt ()
+      | IProjectT(child) ->
+        let c = evalT child
+        in evalIProjectSemElemT c
+      | IPlusT(lChild,rChild) ->
+        let lVal = evalT lChild and
+            rVal = evalT rChild
+        in evalIPlusSemElemT lVal rVal
+      | IDotT(lChild,rChild) ->
+        let lVal = evalT lChild and
+            rVal = evalT rChild
+        in evalIDotSemElemT lVal rVal
+      | IKleeneT(child,starKey) ->
+        let cVal = evalT child
+        in  evalIKleeneSemElemT cVal starKey
+      | ITensor(lChild, rChild) ->
+        let lVal = evalRegExp lChild and
+            rVal = evalRegExp rChild
+        in  evalITensor lVal rVal
+  ;;
+  *)
+  (*  ---- core functions of ICRA regular expression transformation ---- *)
+  
+  (*  Substitute s for free occurrences of x in e, where "free" occurrences are *)
+  (*    defined to be those that do not occur under a star. *)
+  (*  NOTE: In the Newton-CRA project, we could have avoided calling into *)
+  (*    substFreeT in the IDetensor case because we knew that the expression *)
+  (*    e is "normal" in the terminology of the POPL 2017 submission, i.e., that *)
+  (*    the right child of every IDetensor subexpression of e is a IKleeneT. *)
+  let rec substFree s x e =
+    match e with
+      | IVar v -> if (v = x) then s else e
+      | IZero -> e
+      | IOne -> e
+      | IEdge (vs,vt) -> e
+      | IProject (child) -> mkIProject (substFree s x child)
+      | IPlus (lChild, rChild) -> mkIPlus (substFree s x lChild) (substFree s x rChild)
+      | IDot (lChild, rChild) -> mkIDot (substFree s x lChild) (substFree s x rChild)
+      | IKleene (child) -> e
+      | IDetensor (uChild,tChild) ->
+              mkIDetensor (substFree s x uChild) (substFreeT s x tChild)
+  
+  (*  Substitute s for free occurrences of the variable x in e, where x is *)
+  (*    interpreted as the number of some untensored variable, i.e., we will not *)
+  (*    substitute for occurrences of the tensored variable with number x. *)
+  and substFreeT s x e =
+    match e with
+      | IVarT v -> e
+      | IZeroT -> e
+      | IOneT -> e
+      | IProjectT child -> mkIProjectT (substFreeT s x child)
+      | IPlusT(lChild, rChild) -> mkIPlusT (substFreeT s x lChild) (substFreeT s x rChild)
+      | IDotT(lChild, rChild) -> mkIDotT (substFreeT s x lChild) (substFreeT s x rChild)
+      | IKleeneT(child) -> e
+      | ITensor(lChild, rChild) -> mkITensor (substFree s x lChild) (substFree s x rChild)
+  ;;
+  
+  let rec factorAux x e =
+    match e with
+      | IVar v -> if (v = x) then (IZero, IOneT) else (e, IZeroT)
+      | IZero -> (IZero, IZeroT)
+      | IOne -> (IOne, IZeroT)
+      | IEdge (vs,vt) -> (e, IZeroT)
+      | IProject child ->
+        let u, t = (factorAux x child) in
+        (mkIProject u, mkIProjectT t)
+      | IPlus (lChild, rChild) ->
+        let lu,lt = (factorAux x lChild) and
+            ru,rt = (factorAux x rChild) in
+                ((mkIPlus lu ru), (mkIPlusT lt rt))
+      | IDot (lChild, rChild) ->
+        let lu,lt = (factorAux x lChild) and
+            ru,rt = (factorAux x rChild) in
+                ((mkIDot lu ru)
+                 ,
+                 (mkIPlusT
+                   (mkIDotT lt (mkITensor IOne ru))
+                   (mkIDotT rt (mkITensor lChild IOne)))) 
+      | IKleene (child) -> (e, IZeroT)
+      | IDetensor (uChild,tChild) ->
+        let uu,ut = (factorAux x uChild)
+        in  ((mkIDetensor uu tChild),
+             (mkIDotT ut tChild));;
+  
+  (*  Given a variable x and a regular expression e, *)
+  (*   produce a new expression ( u \detensorproduct t* ) *)
+  let isolate x e =
+    let u,t = factorAux x e in
+    mkIDetensor u (mkIKleeneT t);;
+  
+  (*  ---- general substitution functions ---- *)
+  
+  (*  Substitute s for x in e *)
+  let rec subst s x e =
+    match e with
+      | IVar v -> if (x == v) then s else e
+      | IZero -> e
+      | IOne -> e
+      | IEdge (vs,vt) -> e
+      | IProject (child) -> mkIProject (subst s x child)
+      | IPlus (lChild, rChild) -> mkIPlus (subst s x lChild) (subst s x rChild)
+      | IDot (lChild, rChild) -> mkIDot (subst s x lChild) (subst s x rChild)
+      | IKleene (child) -> mkIKleene (subst s x child)
+      | IDetensor (uChild,tChild) -> mkIDetensor (subst s x uChild) (substT s x tChild)
+  
+  (*  Substitute s for the variable x in e, where x is interpreted as the number *)
+  (*    of some untensored variable, so, we will not substitute for occurrences of *)
+  (*    the tensored variable with numbre x. *)
+  and substT s x e =
+    match e with
+      | IVarT v -> e
+      | IZeroT -> e
+      | IOneT -> e
+      | IProjectT (child) -> mkIProjectT (substT s x child)
+      | IPlusT (lChild, rChild) -> mkIPlusT (substT s x lChild) (substT s x rChild)
+      | IDotT (lChild, rChild) -> mkIDotT (substT s x lChild) (substT s x rChild)
+      | IKleeneT (child) -> mkIKleeneT (substT s x child)
+      | ITensor (lChild,rChild) -> mkITensor (subst s x lChild) (subst s x rChild)
+  ;;
+  
+  (*  ---- printing functions ---- *)
+  
+  let rec indent i =
+      if (i <= 0) then ()
+      else (print_char ' '; print_char ' '; indent (i - 1))
+  
+  let rec printRegExpAux e i =
+      match e with
+      | IZero -> indent i; (printf "IZero()\n")
+      | IOne -> indent i; (printf "IOne()\n")
+      | IVar(v) -> indent i; (printf "IVar(%d)\n" v)
+      | IEdge(vs,vt) -> indent i; (printf "IEdge(");
+                        flush stdout;
+                        (*(printWrappedIEdge w (i+1));*)
+                        (printf "%d,%d" vs vt);
+                        indent i; (printf ")\n")
+      | IProject(c) -> indent i; (printf "IProject(\n");
+                      printRegExpAux c (i+1);
+                      indent i; (printf ")\n")
+      | IPlus(c1,c2) -> indent i; (printf "IPlus(\n");
+                       printRegExpAux c1 (i+1);
+                       indent (i+1); (printf ",\n");
+                       printRegExpAux c2 (i+1);
+                       indent i; (printf ")\n")
+      | IDot(c1,c2) ->  indent i; (printf "IDot(\n");
+                       printRegExpAux c1 (i+1);
+                       indent (i+1); (printf ",\n");
+                       printRegExpAux c2 (i+1);
+                       indent i; (printf ")\n")
+      | IKleene(c) -> indent i; (printf "IKleene(");
+                       printRegExpAux c (i+1);
+                       indent i; (printf ")\n")
+      | IDetensor(cu,ct) -> indent i; (printf "IDetensor(\n");
+                           printRegExpAux cu (i+1);
+                           indent (i+1); (printf ",\n");
+                           printRegExpTAux ct (i+1);
+                           indent i; (printf ")\n")
+  
+  and printRegExpTAux e i =
+      match e with
+      | IZeroT -> indent i; (printf "IZero()\n")
+      | IOneT -> indent i; (printf "IOne()\n")
+      | IVarT(v) -> indent i; (printf "IVarT(%d)\n" v)
+      | IProjectT(c) -> indent i; (printf "IProjectT(\n");
+                       printRegExpTAux c (i+1);
+                       indent i; (printf ")\n")
+      | IPlusT(c1,c2) -> indent i; (printf "IPlusT(\n");
+                        printRegExpTAux c1 (i+1);
+                        indent (i+1); (printf ",\n");
+                        printRegExpTAux c2 (i+1);
+                        indent i; (printf ")\n")
+      | IDotT(c1,c2) -> indent i; (printf "IDotT(\n");
+                       printRegExpTAux c1 (i+1);
+                       indent (i+1); (printf ",\n");
+                       printRegExpTAux c2 (i+1);
+                       indent i; (printf ")\n")
+      | IKleeneT(c) -> indent i; (printf "IKleeneT(\n");
+                       printRegExpTAux c (i+1);
+                       indent i; (printf ")\n")
+      | ITensor(c1,c2) -> indent i; (printf "ITensor(\n");
+                         printRegExpAux c1 (i+1);
+                         indent (i+1); (printf ",\n");
+                         printRegExpAux c2 (i+1);
+                         indent i; (printf ")\n")
+  
+  (* end of icraPathExpr*)
+*)
+end
+
+(*    End stuff from old icraRegexp   *)
+(* ---------------------------------- *)
+
+
+
 
 (* ---------------------------------- *)
 (* Begin stuff from old weightedGraph *)
@@ -480,6 +1353,7 @@ let chora_print_wedges = ref false
 let chora_print_depth_bound_wedges = ref false
 let chora_debug_squeeze = ref false
 let chora_debug_recs = ref false
+let chora_linspec = ref true
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
 let chora_fallback = ref false
 
@@ -1696,7 +2570,7 @@ let squeeze_top_down_formula phi sym =
   | `Unsat ->
     logf ~level:`always " squeeze: phi_td is infeasible"
  
-let make_top_down_weight_multi procs top (ts : Cra.K.t Cra.label Cra.WG.t) 
+let make_top_down_weight_multi procs top (ts : K.t Cra.label Cra.WG.t) 
       is_scc_call lower_summaries base_case_map height 
       (* for debugging:  program_vars *) =
   (* Note: this height variable really represents depth *)
@@ -1971,7 +2845,11 @@ let scc_mem (scc:BURG.scc) en ex =
   List.fold_left (fun found (p_entry,p_exit,pathexpr) -> 
     found || (p_entry == en && p_exit = ex)) false scc.procs;;
 
-let find_recursive_calls (ts : Cra.K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.scc) = 
+type edge_content = RecursiveCall of int * int 
+                    | NonRecursiveCall of K.t
+                    | WeightedEdge of K.t
+
+let find_recursive_calls (ts : K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.scc) = 
   let pe_call_edge_set = function
     | `Edge (s, t) ->
       begin match WeightedGraph.edge_weight ts s t with
@@ -2037,7 +2915,137 @@ let check_linearity pathexpr is_scc_call =
     true)
   with HasNonlinearRecursion -> false
 
-let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =  
+let is_constant_ipathexpr ipathexpr = 
+  let is_constant = 
+    ((function
+      | `IDetensor (u,t) -> u && t
+      | `IProject x -> x
+      | `IVar v -> false
+      | `IConstantEdge (s, t) -> true
+      | `IMul (x, y) -> x && y
+      | `IAdd (x, y) -> x && y
+      | `IStar x -> x
+      | `IZero -> true
+      | `IOne -> true), 
+     (function 
+      | `ITensor (x,y) -> x && y
+      | `IProjectT x -> x
+      | `IMulT (x, y) -> x && y
+      | `IAddT (x, y) -> x && y
+      | `IStarT x -> x
+      | `IZeroT -> true
+      | `IOneT -> true))
+  in
+  IcraPathExpr.eval is_constant ipathexpr
+
+let detensor_product uchild tchild = 
+  let one_tensor_uchild = NewtonDomain.tensor K.one uchild in
+  let dotted = KK.mul one_tensor_uchild tchild in
+  NewtonDomain.detensor_transpose dotted
+
+let handle_linear_recursion (scc : BURG.scc) classify_edge = 
+  let original_equation_system = 
+      List.fold_left (fun eqs (p_entry, p_exit, pathexpr) ->
+        IntPairMap.add (p_entry,p_exit) pathexpr eqs)
+    IntPairMap.empty
+    scc.procs 
+    in
+  let ctx = IcraPathExpr.mk_context () in
+  let convert_pathexpr_alg = function
+      | `Edge (s, t) -> (match classify_edge s t with
+                         | RecursiveCall (en,ex) ->
+                           IcraPathExpr.mk_project ctx
+                               (IcraPathExpr.mk_var ctx en ex)
+                         | NonRecursiveCall _
+                         | WeightedEdge _ -> 
+                           IcraPathExpr.mk_constant_edge ctx s t)
+      | `Add (b1, b2) -> IcraPathExpr.mk_add ctx b1 b2
+      | `Mul (b1, b2) -> IcraPathExpr.mk_mul ctx b1 b2
+      | `Star b -> IcraPathExpr.mk_star ctx b
+      | `Zero -> IcraPathExpr.mk_zero ctx
+      | `One -> IcraPathExpr.mk_one ctx
+    in
+  let icrapathexpr_equation_system = 
+      IntPairMap.mapi (fun (p_entry, p_exit) pathexpr -> 
+        NPathexpr.eval convert_pathexpr_alg pathexpr) 
+        original_equation_system in
+  Format.printf " Original equation system: @."; 
+    IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
+      Format.printf " (%d,%d) := %a @." 
+      p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
+    icrapathexpr_equation_system;
+  let transformed_ipathexpr_equation_system = 
+      IntPairMap.fold (fun (p_entry, p_exit) _ eqs -> 
+        let old_rhs = IntPairMap.find (p_entry, p_exit) eqs in
+        Format.printf " Acting on (%d,%d): @." p_entry p_exit; 
+        let var = (p_entry,p_exit) in
+        (* First, call Factor_{var} and then produce rhs' = U |>< (T)* *)
+        let rhs' = IcraPathExpr.isolate ctx var old_rhs in
+        let substituted_eqs = 
+          IntPairMap.mapi 
+            (fun (p_entry', p_exit') ipathexpr' ->
+              if (p_entry', p_exit') = (p_entry,p_exit) 
+              then rhs' (* var = rhs' *)
+              else IcraPathExpr.subst ctx rhs' var ipathexpr')
+            eqs
+          in
+          Format.printf " After one substitution pass: @."; 
+            IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
+                Format.printf " (%d,%d) := %a @." 
+                p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
+              substituted_eqs;
+          substituted_eqs)
+        icrapathexpr_equation_system 
+        icrapathexpr_equation_system in
+  Format.printf " Transformed equation system: @."; 
+    IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
+      Format.printf " (%d,%d) := %a @." 
+      p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
+    transformed_ipathexpr_equation_system;
+  let () = IntPairMap.iter (fun (p_entry, p_exit) ipathexpr -> 
+             assert (is_constant_ipathexpr ipathexpr))
+             transformed_ipathexpr_equation_system in
+  let tr_alg = 
+    ((function
+      | `IDetensor (u,t) -> detensor_product u t
+      | `IProject x -> project x
+      | `IVar v -> failwith "Variables should have been eliminated already!"
+      | `IConstantEdge (s, t) -> (match classify_edge s t with
+         | RecursiveCall (en,ex) -> failwith "Un-eliminated recursive call"
+         | WeightedEdge w 
+         | NonRecursiveCall w -> w)
+      | `IMul (x, y) -> K.mul x y
+      | `IAdd (x, y) -> K.add x y
+      | `IStar x -> K.star x
+      | `IZero -> K.zero
+      | `IOne -> K.one), 
+     (function 
+      | `ITensor (x,y) -> NewtonDomain.tensor (K.transpose x) y
+      | `IProjectT x -> KK.project x
+      | `IMulT (x, y) -> KK.mul x y
+      | `IAddT (x, y) -> KK.add x y
+      | `IStarT x -> KK.star x
+      | `IZeroT -> KK.zero
+      | `IOneT -> KK.one)) in
+  let table = IcraPathExpr.mk_table () in
+  let assignment = 
+    IntPairMap.mapi (fun (p_entry, p_exit) ipathexpr -> 
+      let full_summary = IcraPathExpr.eval ~table tr_alg ipathexpr in
+      K.project full_summary)
+      transformed_ipathexpr_equation_system in
+  let summaries = 
+    IntPairMap.fold (fun (p_entry, p_exit) summary s ->
+      (p_entry, p_exit, summary)::s)
+      assignment
+      [] in
+  Format.printf " Summaries of linearly recursive procedures: @."; 
+    IntPairMap.iter (fun (p_entry'',p_exit'') summary -> 
+        Format.printf " (%d,%d) := @." p_entry'' p_exit'';
+        print_indented ~level:`always 3 summary)
+    assignment;
+  summaries
+
+let build_summarizer (ts : K.t Cra.label Cra.WG.t) =  
   let program_vars = 
     let open CfgIr in let file = get_gfile() in
     let never_addressed_functions = 
@@ -2064,9 +3072,27 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
     logf ~level:`info "Processing a call-graph SCC:";
 
     (*let is_within_scc (s,t) = List.mem (s,t) callgraph_scc in*)
-    let is_scc_call s t = match WeightedGraph.edge_weight ts s t with
+    (*let is_scc_call s t = match WeightedGraph.edge_weight ts s t with
                           | Call (en, ex) -> scc_mem scc en ex 
-                          | _ -> false in
+                          | _ -> false in*)
+    (* FIXME: eventually change all the code to use only classify_edge *)
+    let classify_edge s t = 
+      match WeightedGraph.edge_weight ts s t with
+      | Call (en, ex) -> 
+          if scc_mem scc en ex 
+          then RecursiveCall (en,ex)
+          else let summary = (M.find (en, ex) lower_summaries) in
+               NonRecursiveCall (summary)
+      | Weight w -> WeightedEdge w in
+    let is_scc_call s t = 
+      match classify_edge s t with 
+      | RecursiveCall (_,_) -> true
+      | _ -> false in 
+    let call_edge_map = List.fold_left (fun pe_map (p_entry,p_exit,pathexpr) ->
+        let scc_call_edges = find_recursive_calls ts pathexpr scc in
+        IntPairMap.add (p_entry,p_exit) scc_call_edges pe_map)
+      IntPairMap.empty 
+      scc.procs in 
     let edge_weight_with_calls weight_of_call =
       BURG.weight_algebra (fun s t ->
           match M.find (s, t) ts.labels (*rg.labels*) with
@@ -2075,37 +3101,6 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
               if is_scc_call s t (*is_within_scc (en,ex) *)
               then weight_of_call s t en ex
               else M.find (en, ex) lower_summaries) in
-
-    let transition_footprint tr = 
-      BatEnum.fold 
-        (fun vs (var,term) -> VarSet.add var vs)
-        VarSet.empty 
-        (K.transform tr)
-    in 
-    let scc_footprint = 
-      let var_set_alg = function
-        | `Edge (s, t) ->
-          begin match M.find (s, t) ts.labels with
-            | Call (en, ex) -> 
-              if is_scc_call s t then VarSet.empty
-              else transition_footprint (M.find (en, ex) lower_summaries)
-            | Weight w -> transition_footprint w
-          end
-        | `Mul (x, y) | `Add (x, y) -> VarSet.union x y
-        | `Star x -> x
-        | `Zero | `One -> VarSet.empty
-      in
-      List.fold_left (fun vars (p_entry,p_exit,pathexpr) ->
-          VarSet.union vars (NPathexpr.eval var_set_alg pathexpr))
-        VarSet.empty
-        scc.procs
-    in
-    logf ~level:`info " SCC footprint = [";
-    VarSet.iter (fun v -> logf ~level:`info "%a;" (Cra.V.pp) v) scc_footprint;
-    logf ~level:`info "]@.";
-    let scc_global_footprint = 
-      VarSet.filter (fun v -> Cra.V.is_global v) scc_footprint in 
-
     (* path_weight_internal takes a (src,tgt) pair and 
           a call-mapping function (from the client, 
           returning type W.t), and it gives back a W.t for the 
@@ -2114,13 +3109,6 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
       let weight = edge_weight_with_calls weight_of_call in
       WeightedGraph.path_weight path_graph src tgt
       |> NPathexpr.eval (* ~table:query.table *) weight in
-    (* *)
-    let call_edge_map = List.fold_left (fun pe_map (p_entry,p_exit,pathexpr) ->
-        let scc_call_edges = find_recursive_calls ts pathexpr scc in
-        IntPairMap.add (p_entry,p_exit) scc_call_edges pe_map)
-      IntPairMap.empty 
-      scc.procs in 
-
     (* ---------------------- Check for non-recursive SCC ------------------------- *)
     if (List.length scc.procs == 1 
         && (let (p_entry,p_exit,pathexpr) = List.hd scc.procs in
@@ -2134,84 +3122,133 @@ let build_summarizer (ts : Cra.K.t Cra.label Cra.WG.t) =
     else 
     begin
       (* ---------------------------- Recursive SCC ------------------------------- *)
-      List.iter (fun (u,v,p) -> 
-          (logf ~level:`info "  Proc%t = %t" (proc_name_triple u v) (fun f -> NPathexpr.pp f p))) scc.procs;
-      let split_expr_map = List.fold_left (fun se_map (p_entry,p_exit,pathexpr) ->
-          let edge s t = NPathexpr.mk_edge context s t in
-          let pe_algebra = BURG.pathexp_algebra context in 
-          let (rec_pe,nonrec_pe) = factor_pair pathexpr is_scc_call edge pe_algebra in
-          (*let (rec_pe, nonrec_pe) = factor_pair pathexpr is_within_scc edge pe_algebra in*)
-          logf ~level:`info "    Rec part: %t" (fun f -> NPathexpr.pp f rec_pe);
-          logf ~level:`info "    Nonrec part: %t" (fun f -> NPathexpr.pp f nonrec_pe);
-          IntPairMap.add (p_entry,p_exit) (rec_pe,nonrec_pe) se_map)
-        IntPairMap.empty 
-        scc.procs in 
+        logf ~level:`info "  Recursive SCC."; 
+      let is_linear = 
+        List.fold_left (fun so_far (p_entry, p_exit, pathexpr) ->
+          so_far && (check_linearity pathexpr is_scc_call))
+        true
+        scc.procs in
+      (if is_linear then logf ~level:`info "  Linear recursion.");
+      if is_linear && !chora_linspec then 
+      begin
+        handle_linear_recursion scc classify_edge
+      end 
+      else
+      (*if is_linear then 
+        (logf ~level:`info "  Linear recursion.";
+          let _ = handle_linear_recursion scc classify_edge in () )); *)
+      begin
+        (* ----------------------- Non-linear recursion --------------------------- *)
+        logf ~level:`info "  Non-linear recursion.";
+        let transition_footprint tr = 
+          BatEnum.fold 
+            (fun vs (var,term) -> VarSet.add var vs)
+            VarSet.empty 
+            (K.transform tr)
+        in 
+        let scc_footprint = 
+          let var_set_alg = function
+            | `Edge (s, t) ->
+              begin match M.find (s, t) ts.labels with
+                | Call (en, ex) -> 
+                  if is_scc_call s t then VarSet.empty
+                  else transition_footprint (M.find (en, ex) lower_summaries)
+                | Weight w -> transition_footprint w
+              end
+            | `Mul (x, y) | `Add (x, y) -> VarSet.union x y
+            | `Star x -> x
+            | `Zero | `One -> VarSet.empty
+          in
+          List.fold_left (fun vars (p_entry,p_exit,pathexpr) ->
+              VarSet.union vars (NPathexpr.eval var_set_alg pathexpr))
+            VarSet.empty
+            scc.procs
+        in
+        logf ~level:`info "  SCC footprint = [";
+        VarSet.iter (fun v -> logf ~level:`info "%a;" (Cra.V.pp) v) scc_footprint;
+        logf ~level:`info "]@.";
+        let scc_global_footprint = 
+          VarSet.filter (fun v -> Cra.V.is_global v) scc_footprint in 
 
-      (*   ***   Compute the weights of the base case of each procedure  ***   *)
-      let base_case_map = List.fold_left (fun bc_map (p_entry,p_exit,pathexpr) ->
-          let (rec_pe,nonrec_pe) = IntPairMap.find (p_entry,p_exit) split_expr_map in
-          (*let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in*)
-          let base_case_weight = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_zero) nonrec_pe) in
-          logf ~level:`info "  base_case%t = [" (proc_name_triple p_entry p_exit); 
-            print_indented 15 base_case_weight; logf ~level:`info "  ]";
-          IntPairMap.add (p_entry,p_exit) base_case_weight bc_map)
-        IntPairMap.empty 
-        scc.procs in 
+        List.iter (fun (u,v,p) -> 
+            (logf ~level:`info "  Proc%t = %t" (proc_name_triple u v) (fun f -> NPathexpr.pp f p))) scc.procs;
+        let split_expr_map = List.fold_left (fun se_map (p_entry,p_exit,pathexpr) ->
+            let edge s t = NPathexpr.mk_edge context s t in
+            let pe_algebra = BURG.pathexp_algebra context in 
+            let (rec_pe,nonrec_pe) = factor_pair pathexpr is_scc_call edge pe_algebra in
+            (*let (rec_pe, nonrec_pe) = factor_pair pathexpr is_within_scc edge pe_algebra in*)
+            logf ~level:`info "    Rec part: %t" (fun f -> NPathexpr.pp f rec_pe);
+            logf ~level:`info "    Nonrec part: %t" (fun f -> NPathexpr.pp f nonrec_pe);
+            IntPairMap.add (p_entry,p_exit) (rec_pe,nonrec_pe) se_map)
+          IntPairMap.empty 
+          scc.procs in 
 
-      let simple_height = make_variable (if !chora_dual then "RB" else "H") in 
-      let height_model = 
-        if !chora_dual then 
-          let rm = make_variable "RM" in 
-          let mb = make_variable "MB" in 
-          RB_RM_MB (simple_height (* that is, rb *), rm, mb)
-        else 
-          RB (simple_height) in 
+        (*   ***   Compute the weights of the base case of each procedure  ***   *)
+        let base_case_map = List.fold_left (fun bc_map (p_entry,p_exit,pathexpr) ->
+            let (rec_pe,nonrec_pe) = IntPairMap.find (p_entry,p_exit) split_expr_map in
+            (*let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in*)
+            let base_case_weight = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_zero) nonrec_pe) in
+            logf ~level:`info "  base_case%t = [" (proc_name_triple p_entry p_exit); 
+              print_indented 15 base_case_weight; logf ~level:`info "  ]";
+            IntPairMap.add (p_entry,p_exit) base_case_weight bc_map)
+          IntPairMap.empty 
+          scc.procs in 
 
-      logf ~level:`info "  Beginning top-down analysis"; 
-      (*   ***   Compute top-down summaries for each procedure   ***   *)
-      let top_down_formula_map = 
-        make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries 
-          base_case_map simple_height (* for debugging program_vars *) in
-      logf ~level:`info "  Finished top-down analysis"; 
+        let simple_height = make_variable (if !chora_dual then "RB" else "H") in 
+        let height_model = 
+          if !chora_dual then 
+            let rm = make_variable "RM" in 
+            let mb = make_variable "MB" in 
+            RB_RM_MB (simple_height (* that is, rb *), rm, mb)
+          else 
+            RB (simple_height) in 
 
-      (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
-      let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
-          let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
-          let bounds = mk_call_abstraction base_case_weight scc_global_footprint in 
-          logf ~level:`info "  call_abstration%t = [" (proc_name_triple p_entry p_exit); 
-          print_indented 15 bounds.call_abstraction; logf ~level:`info "  ]";
-          IntPairMap.add (p_entry,p_exit) bounds b_map)
-        IntPairMap.empty 
-        scc.procs in 
+        logf ~level:`info "  Beginning top-down analysis"; 
+        (*   ***   Compute top-down summaries for each procedure   ***   *)
+        let top_down_formula_map = 
+          make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries 
+            base_case_map simple_height (* for debugging program_vars *) in
+        logf ~level:`info "  Finished top-down analysis"; 
 
-      (*   ***   Compute the recursive-case weight for each procedure  ***   *)
-      let rec_case_map = List.fold_left (fun rc_map (p_entry,p_exit,pathexpr) ->
-          (* Define a way of handling calls to each procedure in the SCC *)
-          let weight_of_call_rec cs ct cen cex = 
-            let callee_bounds = IntPairMap.find (cen,cex) bounds_map in
-            callee_bounds.call_abstraction in
-          (* Construct the recursive-case weight *)
-          (* *)
-          (* WARNING: the following line isn't precise unless you take special action to
-               remove the base case later... *)
-          (*let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
-          logf ~level:`info "  recursive_weight = [";
-          print_indented 15 recursive_weight;
-          logf ~level:`info "  ]";*)
-          let (rec_pe,nonrec_pe) = IntPairMap.find (p_entry,p_exit) split_expr_map in
-          let recursive_weight_nobc = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_rec) rec_pe) in
-          logf ~level:`info "  recursive_weight-BC%t = [" (proc_name_triple p_entry p_exit);
-          print_indented 15 recursive_weight_nobc;
-          logf ~level:`info "  ]"; 
-          IntPairMap.add (p_entry,p_exit) recursive_weight_nobc rc_map)
-        IntPairMap.empty 
-        scc.procs in 
+        (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
+        let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
+            let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
+            let bounds = mk_call_abstraction base_case_weight scc_global_footprint in 
+            logf ~level:`info "  call_abstration%t = [" (proc_name_triple p_entry p_exit); 
+            print_indented 15 bounds.call_abstraction; logf ~level:`info "  ]";
+            IntPairMap.add (p_entry,p_exit) bounds b_map)
+          IntPairMap.empty 
+          scc.procs in 
 
-      let summary_list = 
-        make_height_based_summaries
-          rec_case_map bounds_map program_vars top_down_formula_map scc height_model in 
+        (*   ***   Compute the recursive-case weight for each procedure  ***   *)
+        let rec_case_map = List.fold_left (fun rc_map (p_entry,p_exit,pathexpr) ->
+            (* Define a way of handling calls to each procedure in the SCC *)
+            let weight_of_call_rec cs ct cen cex = 
+              let callee_bounds = IntPairMap.find (cen,cex) bounds_map in
+              callee_bounds.call_abstraction in
+            (* Construct the recursive-case weight *)
+            (* *)
+            (* WARNING: the following line isn't precise unless you take special action to
+                 remove the base case later... *)
+            (*let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
+            logf ~level:`info "  recursive_weight = [";
+            print_indented 15 recursive_weight;
+            logf ~level:`info "  ]";*)
+            let (rec_pe,nonrec_pe) = IntPairMap.find (p_entry,p_exit) split_expr_map in
+            let recursive_weight_nobc = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_rec) rec_pe) in
+            logf ~level:`info "  recursive_weight-BC%t = [" (proc_name_triple p_entry p_exit);
+            print_indented 15 recursive_weight_nobc;
+            logf ~level:`info "  ]"; 
+            IntPairMap.add (p_entry,p_exit) recursive_weight_nobc rc_map)
+          IntPairMap.empty 
+          scc.procs in 
 
-        summary_list 
+        let summary_list = 
+          make_height_based_summaries
+            rec_case_map bounds_map program_vars top_down_formula_map scc height_model in 
+
+          summary_list 
+      end
     end in
   summarizer
 
@@ -2264,6 +3301,10 @@ let _ =
     ("-chora-debug-recs",
      Arg.Set chora_debug_recs,
      " Print information about recurrences for non-linear recursion");
+  CmdLine.register_config
+    ("-chora-no-linspec",
+     Arg.Clear chora_linspec,
+     " Disable the special-case handling of linear recursion");
   CmdLine.register_config
     ("-chora-dual",
      Arg.Set chora_dual,
@@ -2376,7 +3417,7 @@ let _ =
  * Mostly-functional old version...
  
 let make_top_down_weight_multi 
-    procs top (ts : Cra.K.t Cra.label Cra.WG.t) is_scc_call lower_summaries =
+    procs top (ts : K.t Cra.label Cra.WG.t) is_scc_call lower_summaries =
   (* Note: this height variable really represents depth *)
   let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
   let height_var_val = Cra.VVal height_var in 
