@@ -5,70 +5,70 @@
 
 int cost = 0;
 
-void insertion_sort(int * X, int lo, int hi);
-void merge_sort(int * A, int * B, int len);
-void split_merge(int * B, int lo, int hi, int * A);
-void copy_array(int * A, int lo, int hi, int * B);
+void merge_sort(int * arr, int * scratch, int len);
+void insertion_sort(int * arr, int lo, int hi);
+void split_merge(int * src, int lo, int hi, int * dest);
+void copy_array(int * src, int lo, int hi, int * dest);
 
-void insertion_sort(int * X, int lo, int hi) {
+void insertion_sort(int * arr, int lo, int hi) {
   for(int sorted = 1; sorted < hi-lo; sorted++) {
     for(int pos = sorted; pos > 0; pos--) {
       cost++;
-      if (X[lo+pos-1] < X[lo+pos]) { break; }
-      int tmp = X[lo+pos]; X[lo+pos] = X[lo+pos-1]; X[lo+pos-1] = tmp; 
+      if (arr[lo+pos-1] < arr[lo+pos]) { break; }
+      int tmp = arr[lo+pos]; arr[lo+pos] = arr[lo+pos-1]; arr[lo+pos-1] = tmp;
     }
   }
 }
-void copy_array(int * A, int lo, int hi, int * B) {
-  for(int k = lo; k < hi; k++) { B[k] = A[k]; }
+void copy_array(int * src, int lo, int hi, int * dest) {
+  for(int k = lo; k < hi; k++) { dest[k] = src[k]; }
 }
-void split_merge(int * B, int lo, int hi, int * A) {
+void split_merge(int * src, int lo, int hi, int * dest) {
   int mid = lo + ((hi - lo) / 2);
   if (hi-lo == 2 || hi-lo == 3) {
-    copy_array(B, lo, hi, A);
-    insertion_sort(A, lo, hi);
+    copy_array(src, lo, hi, dest);
+    insertion_sort(dest, lo, hi);
     return;
   }
-  split_merge(A, lo, mid, B);
-  split_merge(A, mid, hi, B);
+  split_merge(dest, lo, mid, src);
+  split_merge(dest, mid, hi, src);
   int i = lo;
   int j = mid;
   for(int k = lo; k < hi; k ++) {
     cost++;
-    if (i < mid && (j >= hi || B[i] <= B[j])) {
-      A[k] = B[i];
+    if (i < mid && (j >= hi || src[i] <= src[j])) {
+      dest[k] = src[i];
       i = i + 1;
     } else {
-      A[k] = B[j];
+      dest[k] = src[j];
       j = j + 1;
     }
   }
 }
-void merge_sort(int * A, int * B, int len) {
+void merge_sort(int * arr, int * scratch, int len) {
   if (len <= 1) return;
-  copy_array(A, 0, len, B);
-  split_merge(B, 0, len, A);
+  copy_array(arr, 0, len, scratch);
+  split_merge(scratch, 0, len, arr);
 }
 
 #ifdef TRYME
 
 // The following is the entrypoint of the executable
 int main(int argc, char ** argv) {
-  int iLength = argc - 1;
-  int * myArray = (int*)malloc(iLength*sizeof(int));
-  int * tempArray = (int*)malloc(iLength*sizeof(int));
-  if (iLength <= 0) { 
+  int len = argc - 1;
+  int * myArray = (int*)malloc(len*sizeof(int));
+  int * scratch = (int*)malloc(len*sizeof(int));
+  if (len <= 0) { 
     printf("Usage: %s <list of integers>\n",argv[0]);
     printf("  Sort some integers.\n");
     return 0; 
   }
-  if (myArray == 0 || tempArray == 0) return -1;
-  for(int i = 0; i < iLength; i++) {
+  if (myArray == 0) return -1;
+  for(int i = 0; i < len; i++) {
     myArray[i] = atoi(argv[i+1]);
   }
-  merge_sort(myArray, tempArray, iLength);
-  for(int i = 0; i < iLength; i++) {
-    printf("%d%c",myArray[i],i==iLength-1?'\n':' ');
+  merge_sort(myArray, scratch, len);
+  for(int i = 0; i < len; i++) {
+    printf("%d%c",myArray[i],i==len-1?'\n':' ');
   }
 }
 
@@ -83,13 +83,13 @@ int lg_n_helper(int n) {
 }
 
 // The following is the entrypoint of the analyzed program
-void main(int iLength, int * myArray, int * tempArray) {
-  __VERIFIER_assume(iLength >= 4);
+void main(int len, int * myArray, int * scratch) {
+  __VERIFIER_assume(len >= 4);
 
-  merge_sort(myArray, tempArray, iLength);
+  merge_sort(myArray, scratch, len);
 
-  int logLength = lg_n_helper(iLength);
-  __VERIFIER_assert(cost < 3*(iLength + iLength*logLength));
+  int logLen = lg_n_helper(len);
+  __VERIFIER_assert(cost < 3*(len + len*logLen));
 }
 
 #endif
