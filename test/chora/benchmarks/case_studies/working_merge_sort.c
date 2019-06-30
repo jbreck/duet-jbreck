@@ -52,7 +52,7 @@ void merge_sort(int * arr, int * scratch, int len) {
 
 #ifdef TRYME
 
-// The following is the entrypoint of the executable
+// The following is the executable harness for merge_sort
 int main(int argc, char ** argv) {
   int len = argc - 1;
   int * myArray = (int*)malloc(len*sizeof(int));
@@ -82,10 +82,8 @@ int lg_n_helper(int n) {
   return r;
 }
 
-// The following is the entrypoint of the analyzed program
+// The following is the analyzer harness for merge_sort
 void main(int len, int * myArray, int * scratch) {
-  __VERIFIER_assume(len >= 4);
-
   merge_sort(myArray, scratch, len);
 
   int logLen = lg_n_helper(len);
