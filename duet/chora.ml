@@ -1935,7 +1935,7 @@ let resource_bound_analysis rg query =
 
 let check_assertions rg query main assertions = 
     if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
-    logf ~level:`always "======= Assertion Checking ======@.";
+    logf ~level:`always "======= Assertion Checking ======";
     let entry_main = (RG.block_entry rg main).did in
     assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
         let path = BURG.path_weight query entry_main v in
