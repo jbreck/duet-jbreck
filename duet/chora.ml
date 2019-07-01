@@ -1353,6 +1353,7 @@ let chora_print_wedges = ref false
 let chora_print_depth_bound_wedges = ref false
 let chora_debug_squeeze = ref false
 let chora_debug_recs = ref false
+let chora_squeeze = ref false
 let chora_linspec = ref true
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
 let chora_fallback = ref false
@@ -2544,7 +2545,20 @@ let make_height_based_summaries
     end
 ;;
 
-let squeeze_top_down_formula phi sym = 
+let squeeze_top_down_formula top_down_formula sym = 
+  let projection x =
+    x = sym ||
+    match Cra.V.of_symbol x with
+    | Some v -> Core.Var.is_global (Cra.var_of_value v)
+    | None -> false
+  in
+  let wedge = Wedge.abstract ~exists:projection Cra.srk top_down_formula in
+  logf ~level:`info " incorporating squeezed depth formula: %t" 
+    (fun f -> Wedge.pp f wedge);
+  let wedge_as_formula = Wedge.to_formula wedge in 
+  Srk.Syntax.mk_and Cra.srk [top_down_formula; wedge_as_formula]
+
+let symbolic_bound_top_down_formula phi sym = 
   logf ~level:`always " squeezing depth-bound formula...";
   let exists x =
     x = sym ||
@@ -2627,11 +2641,16 @@ let make_top_down_weight_multi procs top (ts : K.t Cra.label Cra.WG.t)
         let top_down_symbols, top_down_formula = to_transition_formula td_summary in
         logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
             (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
+        let post_height_sym = post_symbol height.symbol in
         (if !chora_debug_squeeze then
-          squeeze_top_down_formula top_down_formula (post_symbol height.symbol)
+          symbolic_bound_top_down_formula top_down_formula post_height_sym
           (* Note: currently, the above code prints a squeezed version but it doesn't
                actually use the squeezed version in the summary that gets returned;
                in the future, we might want it to actually use the squeezed version*));
+        let top_down_formula = 
+          if !chora_squeeze 
+          then squeeze_top_down_formula top_down_formula post_height_sym
+          else top_down_formula in 
         IntPairMap.add (p_entry,p_exit) top_down_formula td_formula_map
       | _ -> failwith "A call was found in td_summary")
     IntPairMap.empty procs) in
@@ -3301,6 +3320,10 @@ let _ =
     ("-chora-debug-recs",
      Arg.Set chora_debug_recs,
      " Print information about recurrences for non-linear recursion");
+  CmdLine.register_config
+    ("-chora-squeeze",
+     Arg.Set chora_squeeze,
+     " Convert depth-bound formula to wedge");
   CmdLine.register_config
     ("-chora-no-linspec",
      Arg.Clear chora_linspec,
