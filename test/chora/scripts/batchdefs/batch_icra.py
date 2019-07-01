@@ -28,7 +28,8 @@ batch["root"] = os.path.join(choraconfig.benchroot,"icrasuite/")
 
 icra_dirs = ["c4b", "misc-recursive", "duet", "", "STAC/polynomial/assert", 
 "snlee/snlee_tests", "STAC/FiniteDifferencing", "STAC/LESE", "STAC/LowerBound", 
-"STAC/LZ", "sv-benchmarks/loop-acceleration", "sv-benchmarks/loop-invgen", 
+#"STAC/LZ", 
+"sv-benchmarks/loop-acceleration", "sv-benchmarks/loop-invgen", 
 "sv-benchmarks/loop-lit", "sv-benchmarks/loop-new", "sv-benchmarks/loops", 
 "sv-benchmarks/recursive", "sv-benchmarks/recursive-simple", 
 "rec-sv-benchmarks/rec-loop-lit", "rec-sv-benchmarks/rec-loop-new", 
