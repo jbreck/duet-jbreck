@@ -2191,12 +2191,14 @@ let extract_recurrence_for_symbol
       let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
       let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
       logf ~level:`trace "      inner_coeff: %a" QQ.pp inner_coeff;  
+      let normalized_coeffs_and_dims = 
+          BatList.of_enum (Srk.Linear.QQVector.enum new_vec) in
 
       recurrence_candidates := {outer_sym=target_outer_sym;
                                 inner_sym=target_inner_sym;
                                 coeff=inner_coeff;
                                 sub_cs=sub_cs;
-                                inequation=new_coeffs_and_dims;
+                                inequation=normalized_coeffs_and_dims;
                                 dependencies=dep_accum} :: 
                                 (!recurrence_candidates)
       end 
