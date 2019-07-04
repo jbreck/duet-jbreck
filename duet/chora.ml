@@ -3055,7 +3055,8 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
     icrapathexpr_equation_system;
   let transformed_ipathexpr_equation_system = 
       IntPairMap.fold (fun (p_entry, p_exit) _ eqs -> 
-        let old_rhs = IntPairMap.find (p_entry, p_exit) eqs in
+        let old_rhs = IcraPathExpr.mk_project ctx (* project is needed *)
+          (IntPairMap.find (p_entry, p_exit) eqs) in
         Format.printf " Acting on (%d,%d): @." p_entry p_exit; 
         let var = (p_entry,p_exit) in
         (* First, call Factor_{var} and then produce rhs' = U |>< (T)* *)
@@ -3087,7 +3088,7 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
   let tr_alg = 
     ((function
       | `IDetensor (u,t) -> detensor_product u t
-      | `IProject x -> project x
+      | `IProject x -> K.project x
       | `IVar v -> failwith "Variables should have been eliminated already!"
       | `IConstantEdge (s, t) -> (match classify_edge s t with
          | RecursiveCall (en,ex) -> failwith "Un-eliminated recursive call"
