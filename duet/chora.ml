@@ -2646,6 +2646,7 @@ let symbolic_bound_top_down_formula phi sym =
  
 let make_top_down_weight_multi procs top (ts : K.t Cra.label Cra.WG.t) 
       is_scc_call lower_summaries base_case_map height 
+      scc_local_footprint
       (* for debugging:  program_vars *) =
   (* Note: this height variable really represents depth *)
   let set_height_zero = assign_value_to_literal height.value 0 in 
@@ -2660,13 +2661,14 @@ let make_top_down_weight_multi procs top (ts : K.t Cra.label Cra.WG.t)
           begin match WeightedGraph.edge_weight ts s t with
             | Call (en, ex) -> 
               if not (is_scc_call s t) then 
-                (* Call to a procedure that's in a lower SCC *)
+                (* A call to a procedure that's in a lower SCC *)
                 let low = M.find (en,ex) lower_summaries in
                 top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight low) t
               else begin
-                (* Call from this SCC back into this SCC *)
-                (* I should add a half-projection weight here, maybe... *)
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight increment_height) en;
+                (* A call from this SCC back into this SCC *)
+                let havoc_locals = K.havoc (VarSet.to_list scc_local_footprint) in 
+                let havoc_and_inc = K.mul havoc_locals increment_height in 
+                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight havoc_and_inc) en;
                 top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight (project top)) t
               end
             | Weight w -> (* Regular (non-call) edge *)
@@ -3131,6 +3133,18 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
     let never_addressed_functions = 
       List.filter (fun f -> not (Varinfo.addr_taken f.fname)) file.funcs in 
     let vars = List.filter (fun vi -> 
+      (* (not (Varinfo.is_global vi)) || *)
+      let vname = Varinfo.show vi in 
+      not (List.fold_left (fun found f -> (found || ((Varinfo.show f.fname) = vname)))
+        false 
+        never_addressed_functions
+      )) file.vars in 
+    List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in
+  let local_program_vars = 
+    let open CfgIr in let file = get_gfile() in
+    let never_addressed_functions = 
+      List.filter (fun f -> not (Varinfo.addr_taken f.fname)) file.funcs in 
+    let vars = List.filter (fun vi -> 
       (not (Varinfo.is_global vi)) 
       || 
       let vname = Varinfo.show vi in 
@@ -3138,12 +3152,17 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         false 
         never_addressed_functions
       )) file.vars in 
-    List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in 
-  let top = K.havoc program_vars in 
+    List.map (fun vi -> Cra.VVal (Core.Var.mk vi)) vars in
+  let havoc_locals = K.havoc local_program_vars in
+  let top = K.havoc program_vars in
 
-  (*logf ~level:`info "  top = [";
-  print_indented 15 top;
-  logf ~level:`info "  ]\n";*)
+  logf ~level:`trace "  top = [";
+  print_indented 3 top;
+  logf ~level:`trace "  ]\n";
+
+  logf ~level:`trace "  havoc_locals = [";
+  print_indented 3 havoc_locals;
+  logf ~level:`trace "  ]\n";
 
   let weight_of_call_zero cs ct cen cex = K.zero in
   (*let summarizer (scc : BURG.scc) path_weight_internal context pathexp_algebra =*)
@@ -3249,6 +3268,11 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         logf ~level:`info "]@.";
         let scc_global_footprint = 
           VarSet.filter (fun v -> Cra.V.is_global v) scc_footprint in 
+        let scc_local_footprint = 
+          VarSet.filter (fun v -> not (Cra.V.is_global v)) scc_footprint in 
+        logf ~level:`info "  SCC locals footprint = [";
+        VarSet.iter (fun v -> logf ~level:`info "%a;" (Cra.V.pp) v) scc_local_footprint;
+        logf ~level:`info "]@.";
 
         List.iter (fun (u,v,p) -> 
             (logf ~level:`info "  Proc%t = %t" (proc_name_triple u v) (fun f -> NPathexpr.pp f p))) scc.procs;
@@ -3287,7 +3311,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         (*   ***   Compute top-down summaries for each procedure   ***   *)
         let top_down_formula_map = 
           make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries 
-            base_case_map simple_height (* for debugging program_vars *) in
+            base_case_map simple_height scc_local_footprint in
         logf ~level:`info "  Finished top-down analysis"; 
 
         (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
