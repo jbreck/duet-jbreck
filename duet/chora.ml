@@ -1357,6 +1357,7 @@ let chora_squeeze = ref false
 let chora_linspec = ref true
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
 let chora_fallback = ref false
+let chora_just_allow_decrease = ref false (* WARNING: it's unsound to set this to true *)
 
 type val_sym = { 
     value: Cra.value; 
@@ -1529,14 +1530,20 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
   let (tr_symbols, body) = 
       to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
   (*logf ~level:`info "  transition_formula_body: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) body;*)
+  (*let param_prime = Str.regexp "param[0-9]+'" in*)
   let projection x = 
-    (* FIXME: THIS IS QUICK AND DIRTY *)
-    (* FIXME: remove this clause*)
-    (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
-    || 
-    match Cra.V.of_symbol x with 
-    | Some v -> Cra.V.is_global v
-    | None -> false (* false *)
+    (*let symbol_name = Srk.Syntax.show_symbol Cra.srk x in 
+    let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
+    if this_name_is_a_param_prime then 
+        ((*Format.printf "Rejected %s" symbol_name;*) false)
+    else*)
+    ( 
+      (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
+      || 
+      match Cra.V.of_symbol x with 
+      | Some v -> Cra.V.is_global v
+      | None -> false (* false *)
+    )
   in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
   logf ~level:`info "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
@@ -1592,7 +1599,7 @@ type 'a recurrence_collection = {
 type recurrence_candidate = {
   outer_sym: Srk.Syntax.symbol;
   inner_sym: Srk.Syntax.symbol;
-  coeff: Srk.QQ.t;
+  (*coeff: Srk.QQ.t;*)
   sub_cs: Cra.Ctx.t Srk.CoordinateSystem.t;
   inequation: (Srk.QQ.t * int) list;
   dependencies: Srk.Syntax.symbol list (* what other same-stratum symbols does this depend on? *)
@@ -1732,7 +1739,9 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
             blk_transform.(col).(row) <- coeff;
             poly)
         end
-      else build_polynomial recurrences sub_cs coeff dim)
+      (*else build_polynomial recurrences sub_cs coeff dim*)
+      else Polynomial.QQXs.add poly
+          (build_polynomial recurrences sub_cs coeff dim) )
         (* (failwith "Unrecognized component of recurrence inequation")) *)
     const_add_poly
     new_coeffs_and_dims in 
@@ -1942,7 +1951,43 @@ let sanity_check_recurrences recurrences term_of_id =
      failwith "Matrix recurrence transform/add blocks mismatched.");
   let print_expr i term = 
       logf ~level:`trace "  term_of_id[%d]=%a" i (Srk.Syntax.Expr.pp Cra.srk) term in
+  (*let pp_dim f i = 
+      Format.asprintf "%a" (Srk.Syntax.Expr.pp Cra.srk) (term_of_id.(i)) in*)
+  let pp_dim f i = 
+      Format.fprintf f "%a" (Srk.Syntax.Expr.pp Cra.srk) (term_of_id.(i)) in
   Array.iteri print_expr term_of_id;
+  let print_blocks b trb = 
+      let ab = List.nth recurrences.blk_adds ((List.length recurrences.blk_adds) - b - 1) in
+      logf ~level:`trace "  Chora Block %d" b;
+      let col_widths = Array.make ((Array.length trb) + 1) 0 in
+      let strings = Array.make_matrix (Array.length trb) ((Array.length trb)+1) "" in
+      for i = 0 to (Array.length trb) - 1 do
+          let row = trb.(i) in
+          for j = 0 to (Array.length row) - 1 do
+              strings.(i).(j) <- QQ.show trb.(i).(j);
+              col_widths.(j) <- max (col_widths.(j)) (String.length strings.(i).(j))
+          done;
+          let _ = Format.flush_str_formatter () in 
+          Format.fprintf Format.str_formatter " %a " (Srk.Polynomial.QQXs.pp pp_dim) (ab.(i));
+          let addstr = Format.flush_str_formatter () in
+          let j = Array.length row in
+          strings.(i).(j) <- addstr;
+          col_widths.(j) <- max (col_widths.(j)) (String.length strings.(i).(j))
+      done;
+      for i = 0 to ((Array.length strings) - 1) do
+          let row = strings.(i) in
+          let rowstr = ref "|" in 
+          for j = 0 to (Array.length row) - 2 do
+              let strlen = String.length strings.(i).(j) in 
+              rowstr := !rowstr ^ strings.(i).(j) ^ (String.make (col_widths.(j) - strlen) ' ') ^ "|"
+          done;
+          let j = (Array.length row) - 1 in
+          rowstr := !rowstr ^ "  ++  |" ^ strings.(i).(j) ^ "|";
+          rowstr := Str.global_replace (Str.regexp "\n") " " !rowstr;
+          logf ~level:`trace "    [ %s ] " !rowstr
+      done
+    in 
+  List.iteri print_blocks (List.rev recurrences.blk_transforms);
   let adds_size = List.fold_left (fun t arr -> t + Array.length arr) 0 recurrences.blk_adds in
   (if not (adds_size == (Array.length term_of_id)) then
      (Format.printf "Size of term_of_id is %d@." (Array.length term_of_id);
@@ -2056,18 +2101,20 @@ let extract_recurrence_for_symbol
   if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_inner_sym)) then () else
   if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym)) then () else
   begin
-  let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in 
+  (*let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in*)
   let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
   (* *) 
   let rec check_polynomial coeff dim = 
+    Format.printf "****CHKP check_polynomial saw a coefficient %a @."
+      (fun f -> Srk.QQ.pp f) coeff;
     if is_negative coeff then (false,[]) else
     match CoordinateSystem.destruct_coordinate sub_cs dim with 
     | `App (sym,_) -> 
-            ((*Format.printf "****CHKP check_polynomial saw a symbol@.";*)
-             (*(is_an_inner_symbol sym b_in_b_out_map, [sym]))*)
+            (Format.printf "****CHKP check_polynomial saw a symbol@.";
+             (*(is_an_inner_symbol sym b_in_b_out_map, [sym])*)
              (have_recurrence sym recurrences, [sym]))
     | `Mul (x,y) -> 
-            ((*Format.printf "****CHKP check_polynomial saw a `Mul@.";*)
+            (Format.printf "****CHKP check_polynomial saw a `Mul@.";
              let x_result, x_deps = check_vector_dims x in 
              let y_result, y_deps = check_vector_dims y in
              (x_result && y_result, x_deps @ y_deps))
@@ -2167,6 +2214,7 @@ let extract_recurrence_for_symbol
     match examine_coeffs_and_dims [] [] false false with 
     | None -> ()
     | Some (new_coeffs_and_dims, dep_accum) -> 
+      (
       logf ~level:`trace "  Found a possible inequation";
       (*
       let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
@@ -2177,31 +2225,41 @@ let extract_recurrence_for_symbol
       let term = CoordinateSystem.term_of_vec sub_cs vec in 
       (* *)
       let new_vec = Linear.QQVector.of_list new_coeffs_and_dims in
-      let outer_coeff = QQ.negate (Linear.QQVector.coeff target_outer_dim new_vec) in 
+      (*let second_copy_vec = Linear.QQVector.of_list new_coeffs_and_dims in*)
+      (*let outer_coeff = Linear.QQVector.coeff target_outer_dim new_vec in 
+      let negated_outer_coeff = QQ.negate outer_coeff in *)
+      let positive_outer_coeff = 
+          QQ.negate (Linear.QQVector.coeff target_outer_dim new_vec) in 
       (* Drop any inequations that don't even mention the target B_out *)
-      if QQ.equal QQ.zero outer_coeff then () else 
+      if (QQ.equal positive_outer_coeff QQ.zero)
+         || 
+         ((QQ.compare positive_outer_coeff QQ.zero) < 0) then () else 
       begin 
       (* We've identified a recurrence; now we'll put together the data 
         structures we'll need to solve it.  *)
-      let lev = if !chora_debug_recs then `always else `info in
-      logf ~level:lev "  [PRE-REC] %a" (Srk.Syntax.Term.pp Cra.srk) term;  
+      (let lev = if !chora_debug_recs then `always else `info in
+      logf ~level:lev "  [PRE-REC] %a" (Srk.Syntax.Term.pp Cra.srk) term);
       logf ~level:`trace "    before filter: %a" Linear.QQVector.pp vec;
-      logf ~level:`trace "     after filter: %a" Linear.QQVector.pp new_vec;
-      let one_over_outer_coeff = QQ.inverse outer_coeff in 
+      let one_over_outer_coeff = QQ.inverse positive_outer_coeff in
       let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
-      let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in 
-      logf ~level:`trace "      inner_coeff: %a" QQ.pp inner_coeff;  
-      let normalized_coeffs_and_dims = 
+      logf ~level:`trace "    *after filter: %a" Linear.QQVector.pp new_vec;
+      (*let inner_coeff = Linear.QQVector.coeff target_inner_dim new_vec in*)
+      (*logf ~level:`trace "      inner_coeff: %a" QQ.pp inner_coeff;*)
+      let normalized_coeffs_and_dims =
           BatList.of_enum (Srk.Linear.QQVector.enum new_vec) in
-
+      (*let debug_vec = Linear.QQVector.of_list normalized_coeffs_and_dims in*)
+      (*logf ~level:`trace "    **after cycle: %a" Linear.QQVector.pp debug_vec;
+      logf ~level:`trace "      **scv cycle: %a" Linear.QQVector.pp second_copy_vec;*)
       recurrence_candidates := {outer_sym=target_outer_sym;
                                 inner_sym=target_inner_sym;
-                                coeff=inner_coeff;
+                                (*coeff=inner_coeff;*)
                                 sub_cs=sub_cs;
                                 inequation=normalized_coeffs_and_dims;
+                                (*inequation=new_coeffs_and_dims;*) (* FIXME FIXME XXX *)
                                 dependencies=dep_accum} :: 
                                 (!recurrence_candidates)
-      end 
+      end
+      )
     in
   let process_constraint = function 
     | (`Eq, vec) ->  process_inequation vec true; process_inequation vec false
@@ -2497,7 +2555,7 @@ let make_height_based_summaries
     let solution = build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
       rec_case_map bounds_map program_vars top_down_formula_map 
-      scc (post_symbol rb.symbol) body_map ~allow_decrease:false in
+      scc (post_symbol rb.symbol) body_map ~allow_decrease:!chora_just_allow_decrease in
     (* ---------- Build summaries using recurrence solution --------- *)
     let summary_list = 
       List.fold_left (fun sums (p_entry,p_exit,pathexpr) ->
@@ -3337,7 +3395,13 @@ let _ =
   CmdLine.register_config
     ("-chora-full",
      Arg.Unit (fun () -> chora_dual := true; chora_fallback := true),
-     " Include a 'fallback' to height-based analysis in chora dual analysis")
+     " Include a 'fallback' to height-based analysis in chora dual analysis");
+
+
+(*  CmdLine.register_config
+    ("-chora-just",
+     Arg.Set chora_just_allow_decrease,
+     " Allow decrease in bounding functions anywhere.  WARNING: UNSOUND")  (* -- WARNING: unsound -- *) *)
 
 (* 
   Format.printf "wedge: @.  %t @.@." (fun f -> Wedge.pp f wedge);
