@@ -2105,16 +2105,16 @@ let extract_recurrence_for_symbol
   let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
   (* *) 
   let rec check_polynomial coeff dim = 
-    Format.printf "****CHKP check_polynomial saw a coefficient %a @."
-      (fun f -> Srk.QQ.pp f) coeff;
+    (*Format.printf "****CHKP check_polynomial saw a coefficient %a @."
+      (fun f -> Srk.QQ.pp f) coeff;*)
     if is_negative coeff then (false,[]) else
     match CoordinateSystem.destruct_coordinate sub_cs dim with 
     | `App (sym,_) -> 
-            (Format.printf "****CHKP check_polynomial saw a symbol@.";
+            ((*Format.printf "****CHKP check_polynomial saw a symbol@.";*)
              (*(is_an_inner_symbol sym b_in_b_out_map, [sym])*)
              (have_recurrence sym recurrences, [sym]))
     | `Mul (x,y) -> 
-            (Format.printf "****CHKP check_polynomial saw a `Mul@.";
+            ((*Format.printf "****CHKP check_polynomial saw a `Mul@.";*)
              let x_result, x_deps = check_vector_dims x in 
              let y_result, y_deps = check_vector_dims y in
              (x_result && y_result, x_deps @ y_deps))
