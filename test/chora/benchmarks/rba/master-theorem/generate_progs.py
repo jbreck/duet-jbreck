@@ -10,10 +10,10 @@ def createFile(source, target, outerval, innerval):
             if (line.strip() == ("recursive(n/2);")):
                 for i in range(0, outerval+1):
                     outfile.write("    recursive(n/"+str(innerval+2)+");\n")
-            elif ("n <= 1" in line):
-                terminating_cond = " || ".join(["n == " + str(i+1) for i in range(0, innerval+2)])
-                newline = line.replace("n <= 1", terminating_cond)
-                outfile.write(newline)
+            #elif ("n <= 1" in line):
+            #    terminating_cond = " || ".join(["n == " + str(i+1) for i in range(0, innerval+2)])
+            #    newline = line.replace("n <= 1", terminating_cond)
+            #    outfile.write(newline)
             else:
                 outfile.write(line)
         search.close()

@@ -1,0 +1,5 @@
+void loop (int n) {
+    if (n==0) return;
+    __cost++;
+    loop(n-1);
+}
