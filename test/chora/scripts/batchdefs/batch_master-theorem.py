@@ -10,7 +10,7 @@ for adir, dirs, files in os.walk(batch["root"]) :
     batch["files"] += glob.glob(adir + "/*.c")
 batch["format_style"] = "rba"
 batch["warmupfiles"] = ["rba/cost_fib.c","rba/cost_fib_eq.c"]
-batch["toolIDs"] = ["chora","master-theorem"]
+batch["toolIDs"] = ["chora_summary_dsqueeze","master-theorem"]
 #batch["format_col_width_proportional"] = True
 batch["timeout"] = 60
 
