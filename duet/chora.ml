@@ -2644,9 +2644,9 @@ let symbolic_bound_top_down_formula phi sym =
   | `Unsat ->
     logf ~level:`always " squeeze: phi_td is infeasible"
  
-let make_top_down_weight_multi procs top (ts : K.t Cra.label Cra.WG.t) 
+let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t) 
       is_scc_call lower_summaries base_case_map height 
-      scc_local_footprint
+      scc_local_footprint scc_footprint
       (* for debugging:  program_vars *) =
   (* Note: this height variable really represents depth *)
   let set_height_zero = assign_value_to_literal height.value 0 in 
@@ -2654,6 +2654,10 @@ let make_top_down_weight_multi procs top (ts : K.t Cra.label Cra.WG.t)
   let assume_height_non_negative = assume_literal_leq_value 0 height.value in
   let top_graph = ref BURG.empty in
   let dummy_exit_node = ref 0 in (* A dummy exit node representing having finished a base case *)
+  let havoc_locals = K.havoc (VarSet.to_list scc_local_footprint) in 
+  let havoc_loc_and_inc = K.mul havoc_locals increment_height in 
+  let top = K.havoc (VarSet.to_list scc_footprint) in 
+  let havoc_globals = project top in 
   List.iter (fun (p_entry,p_exit,pathexpr) ->
       let add_edges_alg = function
         | `Edge (s, t) ->
@@ -2666,10 +2670,8 @@ let make_top_down_weight_multi procs top (ts : K.t Cra.label Cra.WG.t)
                 top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight low) t
               else begin
                 (* A call from this SCC back into this SCC *)
-                let havoc_locals = K.havoc (VarSet.to_list scc_local_footprint) in 
-                let havoc_and_inc = K.mul havoc_locals increment_height in 
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight havoc_and_inc) en;
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight (project top)) t
+                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight havoc_loc_and_inc) en;
+                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight havoc_globals) t
               end
             | Weight w -> (* Regular (non-call) edge *)
               top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight w) t
@@ -3050,16 +3052,17 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
       IntPairMap.mapi (fun (p_entry, p_exit) pathexpr -> 
         NPathexpr.eval convert_pathexpr_alg pathexpr) 
         original_equation_system in
-  Format.printf " Original equation system: @."; 
+  logf ~level:`info " Beginning Gauss-Jordan elimination."; 
+  logf ~level:`info " Original equation system: @."; 
     IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
-      Format.printf " (%d,%d) := %a @." 
+       logf ~level:`info " (%d,%d) := %a @." 
       p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
     icrapathexpr_equation_system;
   let transformed_ipathexpr_equation_system = 
       IntPairMap.fold (fun (p_entry, p_exit) _ eqs -> 
         let old_rhs = IcraPathExpr.mk_project ctx (* project is needed *)
           (IntPairMap.find (p_entry, p_exit) eqs) in
-        Format.printf " Acting on (%d,%d): @." p_entry p_exit; 
+        logf ~level:`info " Acting on (%d,%d): @." p_entry p_exit; 
         let var = (p_entry,p_exit) in
         (* First, call Factor_{var} and then produce rhs' = U |>< (T)* *)
         let rhs' = IcraPathExpr.isolate ctx var old_rhs in
@@ -3071,17 +3074,17 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
               else IcraPathExpr.subst ctx rhs' var ipathexpr')
             eqs
           in
-          Format.printf " After one substitution pass: @."; 
+          logf ~level:`info " After one substitution pass: @."; 
             IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
-                Format.printf " (%d,%d) := %a @." 
+                logf ~level:`info " (%d,%d) := %a @." 
                 p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
               substituted_eqs;
           substituted_eqs)
         icrapathexpr_equation_system 
         icrapathexpr_equation_system in
-  Format.printf " Transformed equation system: @."; 
+  logf ~level:`info " Transformed equation system: @."; 
     IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
-      Format.printf " (%d,%d) := %a @." 
+      logf ~level:`info " (%d,%d) := %a @." 
       p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
     transformed_ipathexpr_equation_system;
   let () = IntPairMap.iter (fun (p_entry, p_exit) ipathexpr -> 
@@ -3120,10 +3123,10 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
       (p_entry, p_exit, summary)::s)
       assignment
       [] in
-  Format.printf " Summaries of linearly recursive procedures: @."; 
+  logf ~level:`info " Summaries of linearly recursive procedures: @."; 
     IntPairMap.iter (fun (p_entry'',p_exit'') summary -> 
-        Format.printf " (%d,%d) := @." p_entry'' p_exit'';
-        print_indented ~level:`always 3 summary)
+        logf ~level:`info " (%d,%d) := @." p_entry'' p_exit'';
+        print_indented ~level:`info 3 summary)
     assignment;
   summaries
 
@@ -3310,8 +3313,8 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         logf ~level:`info "  Beginning top-down analysis"; 
         (*   ***   Compute top-down summaries for each procedure   ***   *)
         let top_down_formula_map = 
-          make_top_down_weight_multi scc.procs top ts is_scc_call lower_summaries 
-            base_case_map simple_height scc_local_footprint in
+          make_top_down_weight_multi scc.procs (*top*) ts is_scc_call lower_summaries 
+            base_case_map simple_height scc_local_footprint scc_footprint in
         logf ~level:`info "  Finished top-down analysis"; 
 
         (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
