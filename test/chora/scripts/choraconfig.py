@@ -51,10 +51,10 @@ def specify_tool_root_requirement(ID, binary_relative_path_suggestion=None) :
     if ID + "_root" in config : return config[ID + "_root"]
     if binary_relative_path_suggestion is not None :
         require_config(ID + "_root", 
-                       "<ROOTDIR>\nsuch that the " + ID + " tool binary is found at <ROOTDIR>/"
+                       "<TOOLDIR>\nsuch that the " + ID + " tool executable is found at <TOOLDIR>/"
                        +binary_relative_path_suggestion + " on your machine")
     require_config(ID + "_root",
-                   "<ROOTDIR>\nsuch that <ROOTDIR> is the root directory of the tool " + ID + " on your machine")
+                   "<TOOLDIR>\nsuch that <TOOLDIR> is the directory of the tool " + ID + " on your machine")
 
 def get_tool_root(ID) :
     if ID + "_root" in config : return config[ID + "_root"]
