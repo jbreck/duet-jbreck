@@ -87,7 +87,7 @@ void main(int len, int * myArray, int * scratch) {
   merge_sort(myArray, scratch, len);
 
   int logLen = lg_n_helper(len);
-  __VERIFIER_assert(cost < 3*(len + len*logLen));
+  __VERIFIER_assert((len <= 0 || cost < 3*(len + len*logLen)));
 }
 
 #endif
