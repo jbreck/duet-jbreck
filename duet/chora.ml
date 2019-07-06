@@ -1526,13 +1526,11 @@ let increment_variable value =
        (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int 1))])
 
 let mk_call_abstraction base_case_weight scc_global_footprint = 
-  (*let (tr_symbols, body) = to_transition_formula base_case_weight in*)
   let (tr_symbols, body) = 
       to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
-  (*logf ~level:`info "  transition_formula_body: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) body;*)
   (*let param_prime = Str.regexp "param[0-9]+'" in*)
   let projection x = 
-    (*let symbol_name = Srk.Syntax.show_symbol Cra.srk x in 
+    ((*let symbol_name = Srk.Syntax.show_symbol Cra.srk x in 
     let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
     if this_name_is_a_param_prime then 
         ((*Format.printf "Rejected %s" symbol_name;*) false)
@@ -1543,7 +1541,7 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
       match Cra.V.of_symbol x with 
       | Some v -> Cra.V.is_global v
       | None -> false (* false *)
-    )
+    ))
   in 
   let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
   logf ~level:`info "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
@@ -3447,221 +3445,5 @@ let _ =
 (* 
   Format.printf "wedge: @.  %t @.@." (fun f -> Wedge.pp f wedge);
   Format.printf "formula: @.  %a @.@." (Syntax.Formula.pp srk) phi;
-*)
-
-(*
-      (*   ***   Compute the formula-version of the top-down summary and 
-       *           the post-state height symbol for each procedure         ***   *)
-      let top_down_formula_map = List.fold_left (fun tdf_map (p_entry,p_exit,pathexpr) ->
-          let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
-          let top_down_weight = IntPairMap.find (p_entry,p_exit) top_down_weight_map in
-          (* Note: this use of top is a hack; this top isn't really top; it's really
-               havoc-all-program-vars.  For one thing, it doesn't havoc the height variable H. *)
-          (* Make a formula from top_down_weight and get the post-state height symbol *)
-          let top_down_symbols, top_down_formula = 
-            (*K.*)to_transition_formula (K.mul (K.mul top_down_weight base_case_weight) top) in
-          logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
-              (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
-          let is_post_height (pre_sym,post_sym) = (pre_sym == pre_height_sym) in 
-          let new_post_height_sym = 
-            try snd (List.find is_post_height top_down_symbols) 
-            with Not_found -> failwith "CHORA: Failed to find post-height symbol" in 
-          (match !post_height_sym_ref with 
-           | Some sym -> if sym != new_post_height_sym 
-                         then failwith "Differing post-state height symbols"
-                         (* I don't think this happens currently.  If it did happen, we
-                             should create the recurrence solution with a single fresh
-                             loop counter and equate that loop counter to each proc's
-                             post-height symbol at summary-construction time. *)
-           | None -> post_height_sym_ref := Some new_post_height_sym);
-          IntPairMap.add (p_entry,p_exit) (top_down_formula,new_post_height_sym) tdf_map)
-        IntPairMap.empty 
-        scc.procs in 
-*)
-
-
-        (*let height_based_summary = 
-            make_height_based_summary bounds recursive_weight program_vars post_height_sym 
-            top_down_formula in*)
-        (*let height_based_summary = 
-            make_height_based_summary recursive_weight_nobc bounds program_vars post_height_sym 
-            top_down_formula in*)
-
-        
-        
-      (* *)
-      (*
-      let summaries = List.map (fun (p_entry,p_exit,pathexpr) ->
-        (*let scc_call_edges = find_recursive_calls ts pathexpr scc in*)
-
-        let scc_call_edges = IntPairMap.find (p_entry,p_exit) call_edge_map in 
-        assert (IntPairSet.cardinal scc_call_edges != 0); 
-        let (rec_pe,nonrec_pe) = IntPairMap.find (p_entry,p_exit) split_expr_map in
-
-        (* TODO Better handle the footprints of weights, rather than using top.
-         * Should take a pass over all edge weights to union their footprints.
-         * With max, I could allow extraction to use known constants in extraction. *)
-        let (top_down_weight, pre_height_sym) = 
-          make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges in
-
-        let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
-
-        let bounds = mk_call_abstraction base_case_weight in 
-        logf ~level:`info "  call_abstration = ["; print_indented 15 bounds.call_abstraction; logf ~level:`info "  ]";
-        let weight_of_call_rec cs ct cen cex = 
-          if cen == p_entry && cex == p_exit then bounds.call_abstraction
-          else failwith "Mutual recursion not implemented" in
-
-        (* WARNING: the following line isn't precise unless you take special action to
-             remove the base case later... *)
-        (*let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
-        logf ~level:`info "  recursive_weight = [";
-        print_indented 15 recursive_weight;
-        logf ~level:`info "  ]";*)
-        let recursive_weight_nobc = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_rec) rec_pe) in
-        logf ~level:`info "  recursive_weight-BC = [";
-        print_indented 15 recursive_weight_nobc;
-        logf ~level:`info "  ]"; 
-
-        (* Note: this use of top is a hack; this top isn't really top; it's really
-             havoc-all-program-vars.  For one thing, it doesn't havoc the height variable H. *)
-        (* Make a formula from top_down_weight and get the post-state height symbol *)
-        let top_down_symbols, top_down_formula = 
-          K.to_transition_formula (K.mul (K.mul top_down_weight base_case_weight) top) in
-        logf ~level:`info "@.  tdf: %a" 
-            (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
-        let is_post_height (pre_sym,post_sym) = (pre_sym == pre_height_sym) in 
-        let post_height_sym = 
-          try snd (List.find is_post_height top_down_symbols) 
-          with Not_found -> failwith "CRA-Nonlinrec: Failed to find post-height symbol" in 
-
-        let height_based_summary = 
-            make_height_based_summary recursive_weight_nobc bounds program_vars post_height_sym 
-            top_down_formula in
-
-        (p_entry,p_exit,height_based_summary)) scc.procs in
-      let one_summary = List.hd summaries in
-      [one_summary] *)
-        
-(*
- * Mostly-functional old version...
- 
-let make_top_down_weight_multi 
-    procs top (ts : K.t Cra.label Cra.WG.t) is_scc_call lower_summaries =
-  (* Note: this height variable really represents depth *)
-  let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
-  let height_var_val = Cra.VVal height_var in 
-  let height_var_sym = Cra.V.symbol_of height_var_val in 
-  let set_height_zero = assign_value_to_literal height_var_val 0 in 
-  let increment_height = increment_variable height_var_val in 
-  let top_graph = ref BURG.empty in
-  let dummy_exit = ref 0 in (* A dummy exit node representing having finished a base case *)
-  List.iter (fun (p_entry,p_exit,pathexpr) ->
-      let add_edges_alg = function
-        | `Edge (s, t) ->
-          dummy_exit := min !dummy_exit (min s t);
-          begin match WeightedGraph.edge_weight ts s t with
-            | Call (en, ex) -> 
-              if not (is_scc_call s t) then 
-                (* Call to a procedure that's in a lower SCC *)
-                let low = M.find (en,ex) lower_summaries in
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight low) t
-              else begin
-                (* Call from this SCC back into this SCC *)
-                (* I should add a half-projection weight here, maybe... *)
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight increment_height) en;
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight (project top)) t
-              end
-            | Weight w ->
-              (* Regular (non-call) edge *)
-              top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight w) t
-          end
-        | _ -> () (* Add, Mul, Star, etc. *) in
-      NPathexpr.eval add_edges_alg pathexpr)
-    procs;
-  List.iter (fun (p_entry,p_exit,pathexpr) -> (* Add an edge from each proc exit to dummy_exit *)
-      (* Note: this use of top is a hack; this top isn't really top; it's really
-           havoc-all-program-vars.  For one thing, it doesn't havoc the height variable H,
-           which is good, because that's the main thing we want to get out of this analysis. *)
-      top_graph := Srk.WeightedGraph.add_edge !top_graph p_exit (Weight top) dummy_exit-1)
-    procs;
-  let td_summary_map = List.fold_left 
-    (fun td_summary_map (p_entry,p_exit,pathexpr) ->
-      match WeightedGraph.path_weight !top_graph p_entry p_exit with
-      | Weight cycles ->
-        let td_summary = K.mul set_height_zero cycles in
-        logf ~level:`info "  multi_phi_td%t = [" (proc_name_triple p_entry p_exit);
-        print_indented 15 td_summary;
-        logf ~level:`info "  ]\n";
-        IntPairMap.add (p_entry,p_exit) td_summary td_summary_map
-      | _ -> failwith "Call returned td_summary")
-    IntPairMap.empty
-    procs in
-  (td_summary_map, height_var_sym);;
-*)
-        
-        
-        (*List.iter (fun vi -> (logf ~level:`info "       var %t @." (fun f -> Varinfo.pp f vi))) file.vars; *)
-    (* let vars = List.filter (fun vi -> not (CfgIr.defined_function vi file)) file.vars in *)
-    (*let vars = List.filter (fun vi -> 
-      match Core.Varinfo.get_type vi with 
-      | Concrete ctyp ->
-        (match ctyp with 
-         | Func (_,_) -> false 
-         | _ -> true ) 
-      | _ -> true ) file.vars in *)
-    (*List.iter (fun vi -> (logf ~level:`info "  true var %t @." (fun f -> Varinfo.pp f vi))) vars;*)
-
-      (*let weight =
-        BURG.weight_algebra (fun s t ->
-            match M.find (s, t) (!top_graph).labels with
-            | Weight w -> w
-            | Call (en, ex) -> failwith "Error: call in top_graph") in
-      let td_summary = NPathexpr.eval ~table:tab weight cycles in*)
-  (*let context = NPathexpr.mk_context () in
-  let top_path_graph =
-    { graph = !top_graph.graph;
-      labels = M.mapi (fun (u,v) _ -> NPathexpr.mk_edge context u v) rg.labels;
-      algebra = pathexp_algebra context } in *)
-(*
-  let edge_weight_with_calls weight_of_call =
-    BURG.weight_algebra (fun s t ->
-        match M.find (s, t) ts.labels (*rg.labels*) with
-        | Weight w -> w
-        | Call (en, ex) -> 
-            if is_scc_call s t (*is_within_scc (en,ex) *)
-            then weight_of_call s t en ex
-            else M.find (en, ex) lower_summaries) in
-  (* path_weight_internal takes a (src,tgt) pair and 
-        a call-mapping function (from the client, 
-        returning type W.t), and it gives back a W.t for the 
-        paths from src to tgt *)
-  let path_weight_internal src tgt weight_of_call = 
-    let weight = edge_weight_with_calls weight_of_call in
-    WeightedGraph.path_weight path_graph src tgt
-    |> NPathexpr.eval (* ~table:query.table *) weight in
-*)
-
-
-  (*logf ~level:`info "@.    simplified%t: %a" (proc_name_triple p_entry p_exit)
-      (Srk.Syntax.Formula.pp Cra.srk) solution_starting_at_zero;*)
-      (* let subst_post sym = Srk.Syntax.mk_const Cra.srk (post_symbol sym) in 
-      let post_term = Srk.Syntax.substitute_const Cra.srk subst_post term in *)
-
-
-
-(*
-(* Do I need to do something to rename *all* symbols before conjoining? *)
-(* Except that I don't want to rename pre-state program variables? *)
-(* Hmm, this is complicated *)
-let rename_height_sym old_sym new_sym phi = 
-  let subst x =
-    if x = cost_symbol then
-      Ctx.mk_real QQ.zero
-    else
-      Ctx.mk_const x
-  in
-  let rhs =
-    Syntax.substitute_const Cra.srk subst (K.get_transform cost summary)
 *)
 
