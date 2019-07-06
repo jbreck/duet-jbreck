@@ -1552,19 +1552,22 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
   let bound_list = ref [] in
   let add_bounding_var vec negate =
     let vec = if negate then Srk.Linear.QQVector.negate vec else vec in 
-    let term = CoordinateSystem.term_of_vec cs vec in 
-    (*logf ~level:`info "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;*)
-    (* *)
-    (* Hacky Optional Behavior: Ignore CRA's auto-generated array-position and array-width variables *)
-    let name = Srk.Syntax.Term.show Cra.srk term in
-    match String.index_opt name '@' with | Some i -> () | None ->
+    if CoordinateSystem.type_of_vec cs vec = `TyInt then
     begin
-      let bounding_var = Core.Var.mk (Core.Varinfo.mk_global "B_in" ( Core.Concrete (Core.Int 32))) in 
-      let bounding_var_sym = Cra.V.symbol_of (Cra.VVal bounding_var) in 
-      let bounding_term = Srk.Syntax.mk_const Cra.srk bounding_var_sym in 
-      let bounding_atom = Srk.Syntax.mk_leq Cra.srk term bounding_term in 
-      bounding_atoms := bounding_atom            :: (!bounding_atoms);
-      bound_list     := (bounding_var_sym, term) :: (!bound_list) 
+      let term = CoordinateSystem.term_of_vec cs vec in 
+      (*logf ~level:`info "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;*)
+      (* *)
+      (* Hacky Optional Behavior: Ignore CRA's auto-generated array-position and array-width variables *)
+      let name = Srk.Syntax.Term.show Cra.srk term in
+      match String.index_opt name '@' with | Some i -> () | None ->
+      begin
+        let bounding_var = Core.Var.mk (Core.Varinfo.mk_global "B_in" (Core.Concrete (Core.Int 32))) in 
+        let bounding_var_sym = Cra.V.symbol_of (Cra.VVal bounding_var) in 
+        let bounding_term = Srk.Syntax.mk_const Cra.srk bounding_var_sym in 
+        let bounding_atom = Srk.Syntax.mk_leq Cra.srk term bounding_term in 
+        bounding_atoms := bounding_atom            :: (!bounding_atoms);
+        bound_list     := (bounding_var_sym, term) :: (!bound_list) 
+      end
     end
   in
   let handle_constraint = function 
@@ -2274,12 +2277,20 @@ let make_outer_bounding_symbol
   let outer_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"B_out" `TyInt in
   let lhs = Srk.Syntax.mk_const Cra.srk outer_sym in 
   let rhs = term in 
-  let b_out_constraint = Srk.Syntax.mk_leq Cra.srk lhs rhs in (* was: mk_eq *)
-  let lev = if !chora_debug_recs then `always else `info in
-  logf ~level:lev "  [TERM]: %a ~ %t ~ %t " 
-    (Srk.Syntax.Term.pp Cra.srk) term
-    (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
-    (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym);
+  let b_out_constraint = 
+    (* Drop any b_outs associated with terms that we don't know to be ints *)
+    if Srk.Syntax.term_typ Cra.srk term = `TyInt then
+      ((let lev = if !chora_debug_recs then `always else `info in
+        logf ~level:lev "  [TERM]: %a  @@{h}:  %t  @@{h+1}:  %t " 
+        (Srk.Syntax.Term.pp Cra.srk) term
+        (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
+        (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym));
+        (* B_out <= term *)
+        Srk.Syntax.mk_leq Cra.srk lhs rhs)
+    else (let lev = if !chora_debug_recs then `always else `info in 
+        logf ~level:lev "  Note: dropped a real term ";
+        (* B_out = ? *)
+        Srk.Syntax.mk_true Cra.srk) in
   (*local_b_out_definitions := b_out_constraint :: (!local_b_out_definitions);
   b_in_b_out_map := Srk.Syntax.Symbol.Map.add inner_sym outer_sym !b_in_b_out_map;
   b_out_symbols := Srk.Syntax.Symbol.Set.add outer_sym (!b_out_symbols) in*)
@@ -2305,6 +2316,8 @@ let make_outer_bounding_symbols_for_proc
       ([], b_in_b_out_map, b_out_symbols)
       bounds.bound_pairs in
   logf ~level:`trace "        Finished with bounded terms.";
+  let lev = if !chora_debug_recs then `always else `info in
+  logf ~level:lev "  ";
   (local_b_out_definitions, b_in_b_out_map, b_out_symbols, body)
 
 (* Called once per SCC *)
