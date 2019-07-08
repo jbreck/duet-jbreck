@@ -7,4 +7,4 @@ batch["files"] = glob.glob(batch["root"] + "recursive/*.c") # just the "recursiv
 batch["files"] = batch["files"][4:6] # Just picking numbers 4-6 out of that directory for this quick test
 batch["format_style"] = "assert"
 batch["timeout"] = 60 # probably want much longer than this
-batch["toolIDs"] = ["chora","icra","cpaseq","ua","sea"] # everntually add SEA
+batch["toolIDs"] = ["chora","icra","cpaseq","sea"] # everntually add SEA
