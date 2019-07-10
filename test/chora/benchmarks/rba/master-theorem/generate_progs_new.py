@@ -22,7 +22,7 @@ def createFile(target, a, b, degree, typ):
     if (degree != 0 and typ != "") :
         writeLoop(outfile, degree, typ)
     outfile.write("void recursive(int n) {\n")
-    outfile.write("  __VERIFIER_assume (n >= 0);\n")
+    #outfile.write("  __VERIFIER_assume (n >= 0);\n")
     terminating_cond = " || ".join(["n == " + str(i) for i in range(b, 2*b)])
     outfile.write("  if (" + terminating_cond + ") {\n")
     if (degree != 0):
@@ -38,17 +38,17 @@ def createFile(target, a, b, degree, typ):
         if (degree == 0):
             outfile.write("  __cost++;\n")
         elif (degree == 1):
-            outfile.write("  __cost+=n;\n")
+            outfile.write("  __cost+=m;\n")
         elif (degree == 2):
-            outfile.write("  __cost+=n*n;\n")
+            outfile.write("  __cost+=m*m;\n")
         elif (degree == 3):
-            outfile.write("  __cost+=n*n*n;\n")
+            outfile.write("  __cost+=m*m*m;\n")
         elif (degree == 4):
-            outfile.write("  __cost+=n*n*n*n;\n")
+            outfile.write("  __cost+=m*m*m*m;\n")
         else :
-            outfile.write("  __cost+=n*n*n*n*n;\n")
+            outfile.write("  __cost+=m*m*m*m*m;\n")
     else :
-        outfile.write("  loop(n);\n")
+        outfile.write("  loop(m);\n")
     outfile.write("  return;\n")
     outfile.write("}\n\n")
     outfile.write("void main(int n) {\n")
