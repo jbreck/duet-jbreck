@@ -693,6 +693,161 @@ def format_run(outrun) :
             else :
                 print "Unrecognized formatting style: " + formatting["style"] 
 
+def plot_run(outrun) : 
+    if not os.path.isdir(outrun) : 
+        outrun = choraconfig.testroot + "/output/" + outrun
+    if not os.path.isdir(outrun) : 
+        print "Wasn't a directory: " + outrun
+        usage()
+    #
+    versionfile = outrun + "/version.txt"
+    try :
+        with open(versionfile, "rb") as vers : versiontext = vers.read().strip()
+    except :
+        versiontext = ""
+    #
+    formatting = dict()
+    formattingpath = outrun + "/formatdata.txt"
+    with open(formattingpath, "rb") as formatfile :
+        for line in formatfile :
+            if "=" not in line : continue
+            line = line.rstrip()
+            parts = line.split("=",1)
+            fk = "format_"
+            if parts[0].startswith(fk) : parts[0]=parts[0][len(fk):]
+            formatting[parts[0]]=parts[1]
+    #
+    format_toolIDs = formatting["toolIDs"].split(",")
+    tools = list()
+    for toolID in format_toolIDs :
+        tools.append(choraconfig.get_tool_by_ID(toolID))
+    #
+    sourcefiles = list()
+    sourceroot = outrun+"/sources/"
+    for curdir, dirs, files in os.walk(sourceroot):
+        localsourcefiles = list()
+        for filename in files :
+            path = os.path.join(curdir,filename)
+            if not path.endswith(".c") : continue
+            nicepath = path[len(sourceroot):]
+            localsourcefiles.append(nicepath)
+        sourcefiles.extend(localsourcefiles)
+    sourcefiles = sorted(sourcefiles, key=sort_dir_major)
+    #
+    datfile = Datfile(outrun+"/run.dat")
+    #
+    import matplotlib
+    matplotlib.use("PDF")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import matplotlib.ticker as mticker
+    #
+    use_subset_modes = True
+    subset_modes = ["all","chora1s","seahorn1s","both1s"]
+    chora1s_files = list()
+    seahorn1s_files = list()
+    both1s_files = list()
+    subsetmodes_lists = list()
+    if use_subset_modes : 
+        for sourcefile in sourcefiles :
+            for tool in tools :
+                timestring = datfile.get_default(sourcefile,tool.ID,"time","")
+                try :
+                    time_float = float(timestring)
+                    if tool.ID == "chora" and time_float >= 1.0 : chora1s_files.append(sourcefile) 
+                    if tool.ID == "sea" and time_float >= 1.0 : seahorn1s_files.append(sourcefile) 
+                except : pass
+        for sourcefile in chora1s_files :
+            if sourcefile in seahorn1s_files :
+                both1s_files.append(sourcefile)
+        subsetmodes_lists = [("all",sourcefiles),("chora1s",chora1s_files),
+                             ("seahorn1s",seahorn1s_files),("both1s",both1s_files)]
+    else :
+        subsetmodes_lists = [("all",sourcefiles)]
+    #
+    for subset_mode, subset_sourcefiles in subsetmodes_lists :
+        #
+        fig = plt.figure(figsize=[10.0,7.0])
+        #
+        pass_times = dict()
+        #fail_times = dict()
+        all_times = dict()
+        for tool in tools :
+            pass_times[tool.ID] = list()
+            #fail_times[tool.ID] = list()
+            all_times[tool.ID] = list()
+        for sourcefile in subset_sourcefiles :
+            is_safe = detect_safe_benchmark(sourcefile)
+            for tool in tools :
+                timestring = datfile.get_default(sourcefile,tool.ID,"time","")
+                assert_str = datfile.get_default(sourcefile,tool.ID,"assert","")
+                exitType = datfile.get_default(sourcefile,tool.ID,"exit","")
+                error_str = ""
+                #
+                assert_out = aggregate_assert_results(assert_str, exitType, is_safe, "short", error_str)
+                #
+                if is_safe == "safe" : 
+                    try :
+                        time_float = float(timestring)
+                        if assert_out["conclusion"] == "PASS" :
+                            pass_times[tool.ID].append(time_float)
+                        #else :
+                        #    fail_times[tool.ID].append(time_float)
+                        all_times[tool.ID].append(time_float)
+                    except : pass # ignore unrecognized time data
+        # 
+        legend_handles = list()
+        #
+        colors = 'brcmygk'
+        ax = plt.subplot(2,1,1)
+        ax.set_title("True assertions proved")
+        #plt.xlabel("Number of benchmarks")
+        plt.ylabel("Time (s)")
+        plt.yscale('log')
+        ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:g}'))
+        #ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+        #ax.yaxis.set_minor_formatter(mticker.ScalarFormatter())
+        pass_axes = None
+        ax = plt.subplot(2,1,2)
+        ax.set_title("All true assertions")
+        #ax.set_title("True assertions not proved")
+        plt.xlabel("Number of assertions")
+        plt.ylabel("Time (s)")
+        plt.yscale('log')
+        ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:g}'))
+        #ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+        #ax.yaxis.set_minor_formatter(mticker.ScalarFormatter())
+        max_x = 0
+        fail_axes = None
+        for i_tool, tool in enumerate(tools) :
+            if i_tool < len(colors) : 
+                color = colors[i_tool]
+            else :
+                color = 'k'
+                print "Warning: ran out of distinct colors for tools, defaulting to black for " + tool.ID
+            legend_handles.append(mpatches.Patch(color=color, label=tool.get('displayname')))
+            #
+            pass_times_tool = sorted(pass_times[tool.ID])
+            #fail_times_tool = sorted(fail_times[tool.ID])
+            all_times_tool = sorted(all_times[tool.ID])
+            #
+            plt.subplot(2,1,1)
+            plt.plot(pass_times_tool,color)
+            #fail_times_tool = [-F for F in fail_times_tool]
+            plt.subplot(2,1,2)
+            plt.plot(all_times_tool,color)
+            if len(all_times[tool.ID]) > max_x : max_x = len(all_times[tool.ID])
+        #
+        plt.subplot(2,1,1)
+        ax = plt.gca()
+        ax.set_xlim(xmin=0,xmax=max_x-1)
+        plt.subplot(2,1,2)
+        ax = plt.gca()
+        ax.set_xlim(xmin=0,xmax=max_x-1)
+        #
+        plt.legend(handles=legend_handles)
+        fig.savefig("/u/j/b/jbreck/public/html/cactus_test_" + subset_mode + ".pdf")
+
 if __name__ == "__main__" :
     # obviously, I should use a real command-line processing system here
     if len(sys.argv) < 3 :
@@ -711,6 +866,10 @@ if __name__ == "__main__" :
         if len(sys.argv) < 2 : usage()
         outrun = sys.argv[2]
         format_run(outrun)
+    elif sys.argv[1] == "--cactus" :
+        if len(sys.argv) < 2 : usage()
+        outrun = sys.argv[2]
+        plot_run(outrun)
     else: usage()
     if "--openhtml" in sys.argv :
         for path in created_html_files :
