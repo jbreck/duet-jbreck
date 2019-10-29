@@ -2,11 +2,14 @@ import choraconfig, glob, os.path, re, sys
 
 batch = choraconfig.get_default_batch_dict()
 
+batch["root"] = os.path.join(choraconfig.benchroot,"svcomp2019/")
 #batch["root"] = os.path.join(choraconfig.benchroot,"sv-comp/")
-batch["root"] = "/nobackup/jbreck/sv-benchmarks/c/"
+#batch["root"] = "/nobackup/jbreck/sv-benchmarks/c/"
 batch["files"] = list()
 for adir, dirs, files in os.walk(batch["root"]) :
-    for okdir in ["loops","loop-new","loop-lit","loop-acceleration","loop-invariants","loop-invgen"] :
+    for okdir in ["loops","loop-new","loop-lit",
+                  "loop-acceleration","loop-invariants","loop-invgen",
+                  "recursive","recursive-simple"] :
         if okdir in adir : break
     else :
         continue
@@ -25,7 +28,7 @@ for adir, dirs, files in os.walk(batch["root"]) :
             batch["files"].append(path)
     #batch["files"] += glob.glob(adir + "/*true-unreach*.c")
 print(batch["files"])
-#batch["files"] = batch["files"][4:6] # Just picking numbers 4-6 out of that directory for this quick test
+#batch["files"] = batch["files"][4:6]
 batch["format_style"] = "assert"
-batch["timeout"] = 60 # probably want much longer than this
-batch["toolIDs"] = ["chora","icra2019","cpaseq","sea"] # everntually add SEA
+batch["timeout"] = 300 # may want something longer than this
+batch["toolIDs"] = ["chora","icra2019","cpaseq","sea"]
