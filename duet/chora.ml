@@ -1533,7 +1533,7 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
     ((*let symbol_name = Srk.Syntax.show_symbol Cra.srk x in 
     let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
     if this_name_is_a_param_prime then 
-        ((*Format.printf "Rejected %s" symbol_name;*) false)
+        ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
     else*)
     ( 
       (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
@@ -3435,7 +3435,19 @@ let _ =
     ("-chora-full",
      Arg.Unit (fun () -> chora_dual := true; chora_fallback := true),
      " Include a 'fallback' to height-based analysis in chora dual analysis");
-
+  (*
+  CmdLine.register_parser 
+                   ("smt2",
+                   fun filename ->
+                     Format.printf "Started reading SMT2";
+                     let chan = open_in filename in
+                     let file = CfgIr.read_file chan in
+                     let open Core in
+                     close_in chan;
+                     CfgIr.iter_defs (fun def -> Def.set_max_id def.did) file
+                     Format.printf "Finished reading SMT2";
+                     )
+  *)
 
 (*  CmdLine.register_config
     ("-chora-just",
