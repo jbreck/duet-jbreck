@@ -9,6 +9,7 @@ batch["files"] = list()
 for adir, dirs, files in os.walk(batch["root"]) :
     for okdir in ["loops","loop-new","loop-lit",
                   "loop-acceleration","loop-invariants","loop-invgen",
+                  "loops-crafted-1",
                   "recursive","recursive-simple"] :
         if okdir in adir : break
     else :
