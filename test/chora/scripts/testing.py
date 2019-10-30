@@ -677,7 +677,12 @@ def format_run(outrun) :
 
                         count_add(tool_safe_good, tool.ID, assert_out["safe_good"])
                         count_add(tool_unsafe_good, tool.ID, assert_out["unsafe_good"])
-                        count_add(tool_time, tool.ID, float(timestring))
+                        try: 
+                            timefloat = float(timestring)
+                        except:
+                            timefloat = 0.0
+                            print "WARNING: logging zero time for " + sourcefile + " for " + tool.ID + "; this is probably a mistake"
+                        count_add(tool_time, tool.ID, timefloat)
 
                         table.set(sourcefilekey, "toolassert/"+tool.ID, assert_out["html"])
 
@@ -846,7 +851,7 @@ def plot_run(outrun) :
         ax.set_xlim(xmin=0,xmax=max_x-1)
         #
         plt.legend(handles=legend_handles)
-        fig.savefig("/u/j/b/jbreck/public/html/cactus_test_" + subset_mode + ".pdf")
+        fig.savefig(os.path.join(outrun,"cactus_test_" + subset_mode + ".pdf"))
 
 if __name__ == "__main__" :
     # obviously, I should use a real command-line processing system here
