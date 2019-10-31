@@ -1,0 +1,107 @@
+f_add(aA1, aA2, aResult, pn)
+{
+	#pn >= 0#
+	$cadd1 * pn + cadd2$
+	pi = 0;
+	#pi<=pn#
+	$cadd3 * pi + cadd4 * pn + cadd5f$
+	while(pi<pn)
+	{
+		aResult[pi] = aA1[pi] + aA2[pi];
+		pi = pi + 1;
+	}
+}
+
+f_subtract(aA1, aA2, aResult, pn)
+{
+	#pn >= 0#
+	$csub1 * pn + csub2$
+	pi = 0;
+	#pi<=pn#
+	$csub3 * pi + csub4 * pn + csub5$
+	while(pi<pn)
+	{
+		aResult[pi] = aA1[pi] - aA2[pi];
+		pi = pi + 1;
+	}
+}
+
+f_initialize(aA, pn)
+{
+	#pn>=0#
+	$cinit1 * pn + cinit2$
+	pi = 0;
+	#pi<=pn#
+	$cinit3 * pi + cinit4 * pn + cinit5$
+	while(pi<pn)
+	{
+		aA[pi] = 0;
+		pi = pi + 1;
+	}
+}
+
+f_shift(aA, aResult, pn, pShift)
+{
+	#pn>=0 and pShift>=0#
+	$cshift1 * pn + cshift2 * pShift + cshift3$
+	if(pn>=1)
+	{
+		pi = pn - 1;
+		#pi + 1 >= 0#
+		$cshift4 * pi + cshift5$
+		while(pi>=0)
+		{
+			aResult[pi+pShift]=aA[pi];
+			pi = pi - 1;
+		}
+	}	
+}
+
+f_copy(aSource, aDestination, pBeginIndex, pEndIndex)
+{
+	#pBeginIndex>=0 and pEndIndex>=pBeginIndex#
+	$ccopy1 * (pEndIndex - pBeginIndex + 1)$
+	pi = pBeginIndex;
+	pj = 0;
+	#pi>=pBeginIndex and pi<=pEndIndex#
+	$ccopy2 * (pEndIndex - pi + 1)$
+	while(pi<pEndIndex)
+	{
+		aDestination[pj] = aSource[pi];
+		pi = pi + 1;
+		pj = pj + 1;
+	}
+}
+
+f_karatsuba(aP, aQ, aResult, pn)
+{
+	#pn>=0#
+	$cmain * (pn)^1.6 + c2 * pn + c3$
+	
+	if(pn>=3)
+	{
+	pm = pn / 2;
+	
+	f_copy(aP, aP1, 0, pm - 1);
+	f_copy(aP, aP2, pm, pn - 1);
+
+	f_copy(aQ, aQ1, 0, pm - 1);
+	f_copy(aQ, aQ2, pm, pn - 1);
+
+	f_karatsuba(aP0, aQ0, aZ0, pm);
+	f_karatsuba(aP1, aQ1, aZ2, pm);
+	
+	f_add(aP1, aP2, aPSum, pm);
+	f_add(aQ1, aQ2, aQSum, pm);
+
+	f_karatsuba(aPSum, aQSum, aZSum, pm);
+	f_subtract(aZSum, aZ2, aZ3, pm);
+	f_subtract(aZ3, aZ0, aZ1, pm);
+
+	f_shift(aZ1, aZ1s, pm, pm);
+	f_shift(aZ2, aZ2s, pm, 2*pm);
+	
+	f_add(aZ0, aZ1s, aPartialSum, 2 * pn);
+	f_add(aPartialSum, aZ2s, aResult, 2 * pn);
+	}
+}

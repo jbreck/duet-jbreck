@@ -1,0 +1,47 @@
+f_mergesort(aArray, pBegin, pEnd)
+{
+	#pBegin>=0 and pEnd>=pBegin#
+	$cmain * (pEnd - pBegin + 1) * ln(pEnd - pBegin + 1) + c2 * (pEnd - pBegin + 1) + c3$
+	if(pEnd - pBegin>=2)
+	{
+		f_mergesort(aArray, pBegin, (pBegin + pEnd)/2 - 1);
+		f_mergesort(aArray, (pBegin + pEnd)/2, pEnd);
+		f_merge(aArray, pBegin, (pBegin+pEnd)/2, pEnd);
+	}
+}
+
+
+f_merge(aArray ,pBegin, pMiddle, pEnd)
+{
+	#pBegin>=0 and pMiddle>=pBegin and pEnd>=pMiddle and pi<=pEnd - pBegin#
+	$c4 * (pEnd-pBegin+1)$
+	pi = 0;
+	pFirst = pBegin;
+	pSecond = pMiddle;
+
+	#pi>=0#
+	$c5 * pi + c6 * pEnd + c7 * pBegin + c8$
+	while(pi<pEnd - pBegin)
+	{
+		if(pFirst==pMiddle or aArray[pSecond]<aArray[pFirst])
+		{
+			aArray2[pi] = aArray[pFirst];
+			pFirst = pFirst + 1;
+		}
+		else
+		{
+			aArray2[pi] = aArray[pSecond];
+			pSecond = pSecond + 1;
+		}
+		pi = pi + 1;
+	}
+	
+	pi = 0;
+	#pi>=0#
+	$c9 * pi + c10 * pEnd + c11*pBegin + c12$
+	while(pi < pEnd - pBegin)
+	{
+		aArray[pBegin + pi] = aArray2[pi];
+		pi = pi + 1;
+	}
+}

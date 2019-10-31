@@ -1,0 +1,15 @@
+f_factorial(pn)
+{
+	#pn>=0#
+	$c1 * pn + c2$
+	if(pn<=1)
+	{
+		pReturn = pReturn * 1;
+	}
+	else
+	{
+		pReturn = pReturn * 4;
+		pn = pn - 1;
+		f_factorial(pn);
+	}
+}

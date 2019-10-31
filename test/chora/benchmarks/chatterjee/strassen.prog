@@ -1,0 +1,136 @@
+f_strassen(aA, aB, aC, pn)
+{
+	#pn>=0#
+	$cmain * (pn)^2.9 + c_2 * pn * pn + c_3$
+	if(pn >= 2)
+	{
+		f_breakInParts(aA, aA11, aA12, aA21, aA22, pn);
+		f_breakInParts(aB, aB11, aB12, aB21, aB22, pn);
+		
+		f_add(aA11, aA22, aM1a, pn / 2);
+		f_add(aB11, aB22, aM1b, pn / 2);
+		f_strassen(aM1a, aM1b, aM1, pn / 2);
+
+		f_add(aA21, aA22, aM2a, pn / 2);
+		f_strassen(aM2a, aB11, aM2, pn /2);
+
+		f_subtract(aB12, aB22, aM3a, pn / 2);
+		f_strassen(aA11, aM3a, aM3, pn / 2);
+
+		f_subtract(aB21, aB11, aM4a, pn / 2);
+		f_strassen(aA22, aM4a, aM4, pn / 2);
+
+		f_add(aA11, aA12, aM5a, pn / 2);
+		f_strassen(aM5a, aB22, aM5, pn / 2);
+
+		f_subtract(aA21, aA11, aM6a, pn / 2);
+		f_add(aB11, aB12, aM6b, pn / 2);
+		f_strassen(aM6a, aM6b, aM6, pn / 2);
+
+		f_subtract(aA12, aA22, aM7a, pn / 2);
+		f_add(aB21, aB22, aM7b, pn / 2);
+		f_strassen(aM7a, aM7b, aM7, pn / 2);
+
+		f_add(aM1, aM4, aC11, pn / 2);
+		f_subtract(aC11, aM5, aC11, pn / 2);
+		f_add(aC11, aM7, aC11, pn / 2);
+
+		f_add(aM3, aM5, aC12, pn / 2);
+		
+		f_add(aM2, aM4, aC21, pn / 2);
+
+		f_subtract(aM1, aM2, aC22, pn / 2);
+		f_add(aC22, aM3, aC22, pn / 2);
+		f_add(aC22, aM6, aC22, pn / 2);
+
+		f_putPartsTogether(aC, aC11, aC12, aC21, aC22, pn);
+	}
+}
+
+
+f_putPartsTogether(aC, aC11, aC12, aC21, aC22, pn)
+{
+	#pn>=1#
+	$cp4 * (pn)^2 $
+	pi = 1;
+	#pi >= 1#
+	$cp5 * (pn)^2$
+	while(pi<=pn)
+	{
+		pj = 1;
+		#pj>=1#
+		$cp6  * pn$
+		while(pj <= pn)
+		{
+			; ; ; ; ;
+			pj = pj + 1;
+		}
+		pi = pi+1;
+	}
+
+}
+f_breakInParts(aA, aA11, aA12, aA21, aA22, pn)
+{
+	#pn>=1#
+	$cb4 * (pn)^2 $
+	pi = 1;
+	#pi >= 1#
+	$cb5 * (pn)^2$
+	while(pi<=pn)
+	{
+		pj = 1;
+		#pj>=1#
+		$cb6  * pn$
+		while(pj <= pn)
+		{
+			; ; ; ; ;
+			pj = pj + 1;
+		}
+		pi = pi+1;
+	}
+
+}
+
+
+f_add(aA, aB, aC, pn)
+{
+	#pn>=1#
+	$cadd4 * (pn)^2 $
+	pi = 1;
+	#pi >= 1#
+	$cadd5 * (pn)^2$
+	while(pi<=pn)
+	{
+		pj = 1;
+		#pn>=1 and pj<=1 and pj>=1#
+		$cadd6  * pn$
+		while(pj <= pn)
+		{
+			;
+			pj = pj + 1;
+		}
+		pi = pi+1;
+	}
+}
+
+f_subtract(aA, aB, aC, pn)
+{
+	#pn>=1#
+	$csub4 * (pn)^2 $
+	pi = 1;
+	#pi >= 1#
+	$csub5 * (pn)^2$
+	while(pi<=pn)
+	{
+		pj = 1;
+		#pn>=1 and pj<=1 and pj>=1#
+		$csub6  * pn$
+		while(pj <= pn)
+		{
+			;
+			pj = pj + 1;
+		}
+		pi = pi+1;
+	}
+}
+	
