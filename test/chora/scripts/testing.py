@@ -592,6 +592,7 @@ def format_run(outrun) :
                 # register rows for each sourcefile, plus the rows for totals for each sub-suite
                 subsuite = subsuite_tag_dir # could make this changeable
                 previous_subsuite_tag = None
+                subsuite_tag = ""
                 for sourcefile in sourcefiles + [None]:
                     if sourcefile is not None : subsuite_tag = subsuite(sourcefile)
                     if previous_subsuite_tag is not None and previous_subsuite_tag != subsuite_tag :
@@ -748,11 +749,12 @@ def plot_run(outrun) :
     import matplotlib.ticker as mticker
     #
     use_subset_modes = True
-    subset_modes = ["all","chora1s","seahorn1s","both1s"]
+    subset_modes = ["all","chora1s","seahorn1s","both1s","either1s"]
     chora1s_files = list()
     seahorn1s_files = list()
     both1s_files = list()
     subsetmodes_lists = list()
+    either1s_files = list()
     if use_subset_modes : 
         for sourcefile in sourcefiles :
             for tool in tools :
@@ -763,10 +765,15 @@ def plot_run(outrun) :
                     if tool.ID == "sea" and time_float >= 1.0 : seahorn1s_files.append(sourcefile) 
                 except : pass
         for sourcefile in chora1s_files :
+            either1s_files.append(sourcefile)
             if sourcefile in seahorn1s_files :
                 both1s_files.append(sourcefile)
+        for sourcefile in seahorn1s_files :
+            if sourcefile not in either1s_files :
+                either1s_files.append(sourcefile)
         subsetmodes_lists = [("all",sourcefiles),("chora1s",chora1s_files),
-                             ("seahorn1s",seahorn1s_files),("both1s",both1s_files)]
+                             ("seahorn1s",seahorn1s_files),("both1s",both1s_files),
+                             ("either1s",either1s_files)]
     else :
         subsetmodes_lists = [("all",sourcefiles)]
     #
@@ -809,6 +816,7 @@ def plot_run(outrun) :
         #plt.xlabel("Number of benchmarks")
         plt.ylabel("Time (s)")
         plt.yscale('log')
+        ax.axhline(y=1.0,linestyle=":",color='#cccccc')
         ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:g}'))
         #ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
         #ax.yaxis.set_minor_formatter(mticker.ScalarFormatter())
@@ -819,6 +827,7 @@ def plot_run(outrun) :
         plt.xlabel("Number of assertions")
         plt.ylabel("Time (s)")
         plt.yscale('log')
+        ax.axhline(y=1.0,linestyle=":",color='#cccccc')
         ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:g}'))
         #ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
         #ax.yaxis.set_minor_formatter(mticker.ScalarFormatter())
