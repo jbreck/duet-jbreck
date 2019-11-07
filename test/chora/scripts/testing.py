@@ -435,7 +435,7 @@ def run(batch, stamp) :
                         sys.stdout.write("  ")
                         sys.stdout.flush()
                 os.remove(tmpfile)
-                if preproc is not None : os.remove(preproc)
+                #if preproc is not None : os.remove(preproc)
             if batch.flag("hide_default_exits") and not anyProblem :
                 sys.stdout.write("\r" + " "*115 + "\r")
                 sys.stdout.flush()
