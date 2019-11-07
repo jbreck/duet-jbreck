@@ -7,11 +7,28 @@ batch["root"] = os.path.join(choraconfig.benchroot,"svcomp2019/")
 #batch["root"] = "/nobackup/jbreck/sv-benchmarks/c/"
 batch["files"] = list()
 for adir, dirs, files in os.walk(batch["root"]) :
-    for okdir in ["loops","loop-new","loop-lit",
-                  "loop-acceleration","loop-invariants","loop-invgen",
+    print adir
+    if adir.endswith("/") : adir = adir[:-1]
+    for okdir in [# Loop benchmarks
+                  "loops",
+                  "loop-acceleration",
+                  "loop-crafted",
+                  "loop-invgen",
+                  "loop-lit",
+                  "loop-new",
+                  "loop-industry-pattern",
                   "loops-crafted-1",
-                  "recursive","recursive-simple"] :
-        if okdir in adir : break
+                  "loop-invariants",
+                  "loop-simple",
+                  "verifythis-loops",
+                  "nla-digbench",
+                  # Recursive benchmarks
+                  "recursive",
+                  "recursive-simple",
+                  "recursive-with-pointer",
+                  "verifythis-recursive",
+                ] :
+        if adir.endswith(okdir) : break
     else :
         continue
     #
