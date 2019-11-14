@@ -1350,10 +1350,12 @@ end)
 
 let chora_print_summaries = ref false
 let chora_print_wedges = ref false
-let chora_print_depth_bound_wedges = ref false
+(*let chora_print_depth_bound_wedges = ref false*)
 let chora_debug_squeeze = ref false
 let chora_debug_recs = ref false
-let chora_squeeze = ref false
+let chora_squeeze_sb = ref false
+let chora_squeeze_wedge = ref false
+let chora_squeeze_conjoin = ref false
 let chora_linspec = ref true
 let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
 let chora_fallback = ref false
@@ -1528,13 +1530,14 @@ let increment_variable value =
 let mk_call_abstraction base_case_weight scc_global_footprint = 
   let (tr_symbols, body) = 
       to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
-  (*let param_prime = Str.regexp "param[0-9]+'" in*)
+  let param_prime = Str.regexp "param[0-9]+'" in
   let projection x = 
-    ((*let symbol_name = Srk.Syntax.show_symbol Cra.srk x in 
+    (
+    let symbol_name = Srk.Syntax.show_symbol Cra.srk x in 
     let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
     if this_name_is_a_param_prime then 
         ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
-    else*)
+    else
     ( 
       (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
       || 
@@ -2616,7 +2619,7 @@ let make_height_based_summaries
     end
 ;;
 
-let squeeze_top_down_formula top_down_formula sym = 
+let top_down_formula_to_wedge top_down_formula sym = 
   let projection x =
     x = sym ||
     match Cra.V.of_symbol x with
@@ -2624,13 +2627,16 @@ let squeeze_top_down_formula top_down_formula sym =
     | None -> false
   in
   let wedge = Wedge.abstract ~exists:projection Cra.srk top_down_formula in
-  logf ~level:`info " incorporating squeezed depth formula: %t" 
+  let level = if !chora_debug_squeeze then `always else `info in
+  logf ~level " incorporating squeezed depth formula: %t" 
     (fun f -> Wedge.pp f wedge);
-  let wedge_as_formula = Wedge.to_formula wedge in 
-  Srk.Syntax.mk_and Cra.srk [top_down_formula; wedge_as_formula]
+  Wedge.to_formula wedge
+  (*let wedge_as_formula = Wedge.to_formula wedge in 
+  Srk.Syntax.mk_and Cra.srk [top_down_formula; wedge_as_formula]*)
 
-let symbolic_bound_top_down_formula phi sym = 
-  logf ~level:`always " squeezing depth-bound formula...";
+let top_down_formula_to_symbolic_bounds phi sym = 
+  let level = if !chora_debug_squeeze then `always else `info in
+  logf ~level " squeezing depth-bound formula...";
   let exists x =
     x = sym ||
     match Cra.V.of_symbol x with
@@ -2640,24 +2646,34 @@ let symbolic_bound_top_down_formula phi sym =
   in
   match Wedge.symbolic_bounds_formula ~exists Cra.srk phi sym with
   | `Sat (lower, upper) ->
-    begin match lower with
-      | Some lower ->
-        logf ~level:`always " squeeze: %a <= height" (Syntax.pp_expr_unnumbered Cra.srk) lower
-      | None -> 
-        logf ~level:`always " squeeze: no lower bound on height"
-    end;
-    begin match upper with
-      | Some upper ->
-        logf ~level:`always " squeeze: height <= %a" (Syntax.pp_expr_unnumbered Cra.srk) upper
-      | None ->
-        logf ~level:`always " squeeze: no upper bound on height"
-    end
+    let lower_bound_formula = 
+      begin match lower with
+        | Some lower ->
+          logf ~level " squeeze: %a <= height" (Syntax.pp_expr_unnumbered Cra.srk) lower;
+          Syntax.mk_leq Cra.srk lower (Syntax.mk_const Cra.srk sym)
+        | None -> 
+          logf ~level " squeeze: no lower bound on height";
+          Syntax.mk_true Cra.srk
+      end
+    in
+    let upper_bound_formula =
+      begin match upper with
+        | Some upper ->
+          logf ~level " squeeze: height <= %a" (Syntax.pp_expr_unnumbered Cra.srk) upper;
+          Syntax.mk_leq Cra.srk (Syntax.mk_const Cra.srk sym) upper
+        | None ->
+          logf ~level " squeeze: no upper bound on height";
+          Syntax.mk_true Cra.srk
+      end
+    in
+    Syntax.mk_and Cra.srk [lower_bound_formula; upper_bound_formula]
   | `Unsat ->
-    logf ~level:`always " squeeze: phi_td is infeasible"
+    logf ~level:`always " squeeze: phi_td is infeasible";
+    Syntax.mk_true Cra.srk
  
 let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t) 
       is_scc_call lower_summaries base_case_map height 
-      scc_local_footprint scc_footprint
+      scc_local_footprint scc_global_footprint scc_footprint
       (* for debugging:  program_vars *) =
   (* Note: this height variable really represents depth *)
   let set_height_zero = assign_value_to_literal height.value 0 in 
@@ -2703,30 +2719,65 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
       | Weight cycles ->
         let td_summary = K.mul set_height_zero cycles in
         let td_summary = K.mul td_summary assume_height_non_negative in
-        (* NOTE: if we want to squeeze the top-down summary, we could do it right here *)
-        let td_summary = project td_summary in (* FIXME Should I be doing this? *)
+        let td_summary = project td_summary in (* FIXME Not sure this is needed *)
         logf ~level:`info "  multi_phi_td%t = [" (proc_name_triple p_entry p_exit);
         print_indented 15 td_summary; logf ~level:`info "  ]\n";
-        (if !chora_print_depth_bound_wedges then
+        (*(if !chora_print_depth_bound_wedges then
         begin
           logf ~level:`always "  wedge[phi_td%t] is [" (proc_name_triple p_entry p_exit);
           debug_print_depth_wedge td_summary;
           logf ~level:`always "  ]";
-        end);
-        let top_down_symbols, top_down_formula = to_transition_formula td_summary in
+        end);*)
+        let _, top_down_formula = to_transition_formula td_summary in
         logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
             (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
         let post_height_sym = post_symbol height.symbol in
-        (if !chora_debug_squeeze then
-          symbolic_bound_top_down_formula top_down_formula post_height_sym
-          (* Note: currently, the above code prints a squeezed version but it doesn't
-               actually use the squeezed version in the summary that gets returned;
-               in the future, we might want it to actually use the squeezed version*));
-        let top_down_formula = 
-          if !chora_squeeze 
-          then squeeze_top_down_formula top_down_formula post_height_sym
-          else top_down_formula in 
-        IntPairMap.add (p_entry,p_exit) top_down_formula td_formula_map
+        let post_height_gt_zero = Syntax.mk_lt Cra.srk 
+          (Syntax.mk_zero Cra.srk)
+          (Syntax.mk_const Cra.srk post_height_sym) in
+        let post_height_eq_zero = Syntax.mk_eq Cra.srk 
+          (Syntax.mk_zero Cra.srk)
+          (Syntax.mk_const Cra.srk post_height_sym) in
+        let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
+        (*let _, base_case_formula = to_transition_formula base_case_weight in*)
+        let _, base_case_formula = 
+          to_transition_formula_with_unmodified base_case_weight scc_global_footprint in 
+        (*let to_be_squeezed = top_down_formula in (* naive version *) *)
+        let to_be_squeezed = 
+          (* sophisticated version: assume H' >= 0 inside squeezed version *) 
+          Syntax.mk_and Cra.srk [post_height_gt_zero; top_down_formula] in
+        let symbolic_bounds_top_down_formula = 
+          if !chora_squeeze_sb || !chora_debug_squeeze
+          then top_down_formula_to_symbolic_bounds to_be_squeezed post_height_sym
+          else Syntax.mk_true Cra.srk in
+        let wedge_top_down_formula = 
+          if !chora_squeeze_wedge || !chora_debug_squeeze
+          then top_down_formula_to_wedge to_be_squeezed post_height_sym
+          else Syntax.mk_true Cra.srk in
+        (*let incorporate_tdf fmla = 
+          Syntax.mk_and Cra.srk [fmla; top_down_formula] in*)
+        let incorporate_tdf fmla = 
+            begin
+              let case_split = 
+                  Syntax.mk_or Cra.srk 
+                    [(Syntax.mk_and Cra.srk [post_height_eq_zero; base_case_formula]);
+                     (Syntax.mk_and Cra.srk [post_height_gt_zero; fmla])] in
+              if !chora_squeeze_conjoin
+              then Syntax.mk_and Cra.srk [top_down_formula; case_split]
+              else case_split
+            end
+          in
+        let final_top_down_formula = 
+          if !chora_squeeze_sb
+          then (if !chora_squeeze_wedge 
+                then
+                  failwith "ERROR: don't use -chora-squeeze and -chora-squeeze-wedge simultaneously"
+                else
+                  incorporate_tdf symbolic_bounds_top_down_formula)
+          else (if !chora_squeeze_wedge 
+                then incorporate_tdf wedge_top_down_formula
+                else top_down_formula) in 
+        IntPairMap.add (p_entry,p_exit) final_top_down_formula td_formula_map
       | _ -> failwith "A call was found in td_summary")
     IntPairMap.empty procs) in
   td_formula_map;;
@@ -3325,7 +3376,8 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         (*   ***   Compute top-down summaries for each procedure   ***   *)
         let top_down_formula_map = 
           make_top_down_weight_multi scc.procs (*top*) ts is_scc_call lower_summaries 
-            base_case_map simple_height scc_local_footprint scc_footprint in
+            base_case_map simple_height 
+            scc_local_footprint scc_global_footprint scc_footprint in
         logf ~level:`info "  Finished top-down analysis"; 
 
         (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
@@ -3407,10 +3459,10 @@ let _ =
     ("-chora-wedges",
      Arg.Set chora_print_wedges,
      " Print procedure summaries abstracted to wedges");
-  CmdLine.register_config
+  (*CmdLine.register_config
     ("-chora-debug-depth-bounds",
      Arg.Set chora_print_depth_bound_wedges,
-     " Print depth bound formulas abstracted to wedges");
+     " Print depth bound formulas abstracted to wedges");*)
   CmdLine.register_config
     ("-chora-debug-squeeze",
      Arg.Set chora_debug_squeeze,
@@ -3421,8 +3473,16 @@ let _ =
      " Print information about recurrences for non-linear recursion");
   CmdLine.register_config
     ("-chora-squeeze",
-     Arg.Set chora_squeeze,
+     Arg.Set chora_squeeze_sb,
+     " Convert depth-bound formula to a simplified symbolic-bounds formula");
+  CmdLine.register_config
+    ("-chora-squeeze-wedge",
+     Arg.Set chora_squeeze_wedge,
      " Convert depth-bound formula to wedge");
+  CmdLine.register_config
+    ("-chora-squeeze-conjoin",
+     Arg.Set chora_squeeze_conjoin,
+     " Conjoin original depth-bound formula to its own squeezed version");
   CmdLine.register_config
     ("-chora-no-linspec",
      Arg.Clear chora_linspec,
