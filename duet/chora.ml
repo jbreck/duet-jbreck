@@ -2771,7 +2771,7 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
           if !chora_squeeze_sb
           then (if !chora_squeeze_wedge 
                 then
-                  failwith "ERROR: don't use -chora-squeeze and -chora-squeeze-wedge simultaneously"
+                  failwith "ERROR: don't use -chora-squeeze and -chora-squeeze-sb simultaneously"
                 else
                   incorporate_tdf symbolic_bounds_top_down_formula)
           else (if !chora_squeeze_wedge 
@@ -3472,11 +3472,11 @@ let _ =
      Arg.Set chora_debug_recs,
      " Print information about recurrences for non-linear recursion");
   CmdLine.register_config
-    ("-chora-squeeze",
+    ("-chora-squeeze-sb",
      Arg.Set chora_squeeze_sb,
      " Convert depth-bound formula to a simplified symbolic-bounds formula");
   CmdLine.register_config
-    ("-chora-squeeze-wedge",
+    ("-chora-squeeze",
      Arg.Set chora_squeeze_wedge,
      " Convert depth-bound formula to wedge");
   CmdLine.register_config
