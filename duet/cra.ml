@@ -133,7 +133,13 @@ module MakeTransition (V : Transition.Var) = struct
 
   module I = Iter(Iteration.MakeDomain(IterDomain))
 
-  let star x = Log.time "cra:star" I.star x
+  let star x =
+    let star x =
+      let abstract = I.alpha x in
+      logf "Loop abstraction:@\n%a" I.pp abstract;
+      I.closure abstract
+    in
+    Log.time "cra.star" star x
 
   let add x y =
     if is_zero x then y

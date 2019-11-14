@@ -24,8 +24,8 @@ module SolvablePolynomialPeriodicRational : PreDomainWedge
    Presurger-definable dynamics. *)
 module PresburgerGuard : PreDomain
 
-(** Partial linear dynamical systems *)
-module PLDS : PreDomain
+(** Deterministic linear transition systems *)
+module DLTS : PreDomain
 
 (** External entry-point used by CHORA *)
 val exp_ocrs_external :
@@ -37,4 +37,3 @@ val exp_ocrs_external :
    QQ.t array array list -> 
    Polynomial.QQXs.t array list -> 
    'a Syntax.formula
-
