@@ -2,8 +2,8 @@
 #define bool int
 #define false 0
 #define true 1
-int __cost;
 int nTicks;
+int __cost;
 bool found;
 int subsetSumSize(int * A, int n) { found = false; return subsetSumSizeAux(A,0,n,0); }
 int subsetSumSizeAux(int * A, int i, int n, int sum) {
@@ -18,8 +18,11 @@ int subsetSumSizeAux(int * A, int i, int n, int sum) {
     return size;
 }
 void main(int n) {
+    nTicks = 0;
     int * A;
-    //if (n >= 0) {
-        __cost = subsetSumSize(A,n);
-    //}
+    if (n >= 0) {
+        //__cost = subsetSumSize(A,n); // return value
+        subsetSumSize(A,n); __cost = nTicks; // cost
+    }
+    
 }
