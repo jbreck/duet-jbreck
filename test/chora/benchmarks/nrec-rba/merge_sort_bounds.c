@@ -2,6 +2,8 @@
 #ifdef TRYME
 #include "stdio.h"
 #include "stdlib.h"
+#else
+//#include "chora_pow_log_helpers.h"
 #endif
 
 int __cost = 0;
@@ -75,19 +77,11 @@ int main(int argc, char ** argv) {
 
 #else
 
-int lg_n_helper(int n) {
-  int r = 0;
-  for(int i = 1; i < n; i *= 2) {
-    r ++;
-  }
-  return r;
-}
-
 // The following is the analyzer harness for merge_sort
 void main(int len, int * myArray, int * scratch) {
   merge_sort(myArray, scratch, len);
 
-  int logLen = lg_n_helper(len);
+  //int logLen = log2_helper(len);
   //__VERIFIER_assert((len <= 0 || __cost < 3*(len + len*logLen)));
 }
 
