@@ -38,5 +38,8 @@ int main(int len)
 	for (i = 0; i < len; i++) a[i] = __VERIFIER_nondet_int();
 
 	start(a, len);
+
+	int bnd = 1 + 2 * len;
+	__VERIFIER_assert(__cost <= bnd);	
 	return 0;
 }
