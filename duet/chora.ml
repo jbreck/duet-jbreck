@@ -2636,7 +2636,7 @@ let top_down_formula_to_wedge top_down_formula sym =
 
 let top_down_formula_to_symbolic_bounds phi sym = 
   let level = if !chora_debug_squeeze then `always else `info in
-  logf ~level " squeezing depth-bound formula...";
+  logf ~level " squeezing depth-bound formula to symbolic bounds formula...";
   let exists x =
     x = sym ||
     match Cra.V.of_symbol x with
@@ -2644,6 +2644,41 @@ let top_down_formula_to_symbolic_bounds phi sym =
     | None -> false
     (*true*)
   in
+  (* New code suggested by Zak *)
+  let symbol_term = Syntax.mk_const Cra.srk sym in
+  let to_formula parts = 
+    let (lower,upper) = parts in
+    (*| None -> Syntax.mk_false Cra.srk
+      | Some (lower, upper) ->*)
+    let lower_bounds =
+      lower
+      |> List.map (fun case ->
+          case |> List.map (fun lower_bound -> Syntax.mk_leq Cra.srk lower_bound symbol_term)
+          |> Syntax.mk_and Cra.srk)
+      |> Syntax.mk_or Cra.srk
+    in
+    let upper_bounds =
+      upper
+      |> List.map (fun case ->
+          case |> List.map (fun upper_bound -> Syntax.mk_leq Cra.srk symbol_term upper_bound)
+          |> Syntax.mk_and Cra.srk)
+      |> Syntax.mk_or Cra.srk
+    in
+    Syntax.mk_and Cra.srk [lower_bounds; upper_bounds]
+  in
+  let formula_parts_wrapped = 
+      Wedge.symbolic_bounds_formula_list ~exists Cra.srk phi sym in
+  match formula_parts_wrapped with
+  | `Sat (formula_parts) -> 
+      let formula = to_formula formula_parts in 
+      logf ~level " sbf-squeeze formula: %a " (Syntax.Formula.pp Cra.srk) formula;
+      formula
+  | `Unsat ->
+      logf ~level:`always " WARNING: sbf-squeeze got unsatisfiable depth formula!";
+      Syntax.mk_true Cra.srk
+
+  (* OLD CODE *)
+  (*
   match Wedge.symbolic_bounds_formula ~exists Cra.srk phi sym with
   | `Sat (lower, upper) ->
     let lower_bound_formula = 
@@ -2670,6 +2705,7 @@ let top_down_formula_to_symbolic_bounds phi sym =
   | `Unsat ->
     logf ~level:`always " squeeze: phi_td is infeasible";
     Syntax.mk_true Cra.srk
+  *)
  
 let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t) 
       is_scc_call lower_summaries base_case_map height 
