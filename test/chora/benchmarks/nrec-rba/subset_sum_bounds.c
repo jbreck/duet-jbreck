@@ -2,12 +2,12 @@
 #define bool int
 #define false 0
 #define true 1
-int nTicks;
+#include "tick.h"
 int __cost;
 bool found;
 int subsetSumSize(int * A, int n) { found = false; return subsetSumSizeAux(A,0,n,0); }
 int subsetSumSizeAux(int * A, int i, int n, int sum) {
-    nTicks++;
+    __cost++;
     if (i >= n) {
         if (sum == 0) { found = true; }
         return 0;
@@ -18,11 +18,8 @@ int subsetSumSizeAux(int * A, int i, int n, int sum) {
     return size;
 }
 void main(int n) {
-    nTicks = 0;
+    init_tick(0);
     int * A;
-    if (n >= 0) {
-        //__cost = subsetSumSize(A,n); // return value
-        subsetSumSize(A,n); __cost = nTicks; // cost
-    }
-    
+    __VERIFIER_assume(n >= 0);
+    subsetSumSize(A,n); 
 }
