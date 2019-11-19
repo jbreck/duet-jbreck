@@ -1353,7 +1353,8 @@ let chora_print_wedges = ref false
 (*let chora_print_depth_bound_wedges = ref false*)
 let chora_debug_squeeze = ref false
 let chora_debug_recs = ref false
-let chora_squeeze_sb = ref false
+(*let chora_squeeze_sb = ref false*)
+let chora_squeeze_sb = ref true (* on by default, now *)
 let chora_squeeze_wedge = ref false
 let chora_squeeze_conjoin = ref false
 let chora_linspec = ref true
@@ -3502,18 +3503,23 @@ let _ =
   CmdLine.register_config
     ("-chora-debug-squeeze",
      Arg.Set chora_debug_squeeze,
-     " Print 'squeezed' depth bound formula using symbolic_bounds_formula");
+     " Print 'squeezed' depth bound formula");
   CmdLine.register_config
     ("-chora-debug-recs",
      Arg.Set chora_debug_recs,
      " Print information about recurrences for non-linear recursion");
-  CmdLine.register_config
+  (*CmdLine.register_config
     ("-chora-squeeze-sb",
      Arg.Set chora_squeeze_sb,
-     " Convert depth-bound formula to a simplified symbolic-bounds formula");
+     " Convert depth-bound formula to simplified symbolic bounds");*)
+  CmdLine.register_config
+    ("-chora-no-squeeze-sb",
+     Arg.Clear chora_squeeze_sb,
+     " Do not convert depth-bound formula to simplified symbolic bounds");
   CmdLine.register_config
     ("-chora-squeeze",
-     Arg.Set chora_squeeze_wedge,
+     (*Arg.Set chora_squeeze_wedge,*)
+     Arg.Unit (fun () -> chora_squeeze_wedge := true; chora_squeeze_sb := false),
      " Convert depth-bound formula to wedge");
   CmdLine.register_config
     ("-chora-squeeze-conjoin",
