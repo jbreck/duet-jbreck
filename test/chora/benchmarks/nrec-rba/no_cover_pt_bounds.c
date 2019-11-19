@@ -32,6 +32,5 @@ void q(int X) {
 
 void main(int X) {
     init_tick(0);
-
     p(X);
 }
