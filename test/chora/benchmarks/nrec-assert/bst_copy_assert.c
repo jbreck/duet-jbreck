@@ -1,5 +1,6 @@
 // Adapted from: https://costa.fdi.ucm.es/pubs/examples.php
 #include "tick.h"
+#include "chora_pow_log_helpers.h"
 
 void copy(int t_height) {
     __VERIFIER_assume(t_height >= 0);
@@ -19,4 +20,6 @@ void main(int t_height) {
     __VERIFIER_assume(t_height >= 0);
 
     copy(t_height);
+
+    __VERIFIER_assert(__cost <= 2 * pow2_helper(t_height) - 1);
 }
