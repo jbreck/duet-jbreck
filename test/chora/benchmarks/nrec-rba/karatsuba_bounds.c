@@ -1,7 +1,6 @@
 // Copied from "chora/benchmarks/case_studies/karatsuba.c"
 #include <stdio.h>
-
-int __cost = 0;
+#include "tick.h"
 
 #define BASE 10
 
@@ -80,7 +79,7 @@ void karatsuba(int n, int * x, int * y, int * res){
     int val = x[0]*y[0];
     res[0] = val % BASE;
     res[1] = val / BASE;
-    __cost++;
+    tick(1);
     return;
   }
   int m = n/2;
@@ -145,6 +144,7 @@ void karatsuba(int n, int * x, int * y, int * res){
 
 
 int main (int N){
+  init_tick(0);
   int *x = (int*)malloc(N*sizeof(int));
   int *y = (int*)malloc(N*sizeof(int));
   int *result = (int*)malloc(2*N*sizeof(int));
