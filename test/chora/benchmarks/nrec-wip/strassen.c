@@ -150,7 +150,7 @@ void strassen(int n, int **x, int **y, int **res) {
 
 void main(int length, int **x, int **y, int **res) {
   init_tick(0);
-  __VERIFIER_assume(len >= 0);
+  __VERIFIER_assume(length >= 0);
 //  int i, j;
 //  int length = 4;
 //  int** x = (int **)malloc(length * sizeof(int*));
