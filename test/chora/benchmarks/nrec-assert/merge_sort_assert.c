@@ -2,6 +2,8 @@
 #ifdef TRYME
 #include "stdio.h"
 #include "stdlib.h"
+#else
+#include "assert.h"
 #endif
 
 int cost = 0;

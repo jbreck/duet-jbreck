@@ -4,6 +4,7 @@
 // C4B output: 1+2|[0,len]|
 
 #include "tick.h"
+#include "assert.h"
 
 void qsort(int *a, int lo, int hi) {
 	tick(1);
