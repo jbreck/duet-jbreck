@@ -1350,6 +1350,7 @@ end)
 
 let chora_print_summaries = ref false
 let chora_print_wedges = ref false
+let chora_use_wedgecover = ref false
 (*let chora_print_depth_bound_wedges = ref false*)
 let chora_debug_squeeze = ref false
 let chora_debug_recs = ref false
@@ -2260,7 +2261,7 @@ let extract_recurrence_for_symbol
                                 (*coeff=inner_coeff;*)
                                 sub_cs=sub_cs;
                                 inequation=normalized_coeffs_and_dims;
-                                (*inequation=new_coeffs_and_dims;*) (* FIXME FIXME XXX *)
+                                (*inequation=new_coeffs_and_dims;*)
                                 dependencies=dep_accum} :: 
                                 (!recurrence_candidates)
       end
@@ -3229,6 +3230,25 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
     assignment;
   summaries
 
+
+let postprocess_summaries summary_list =
+  if !chora_use_wedgecover then 
+    let postprocess_summary parts = 
+      let (p_entry, p_exit, summary) = parts in
+      let tr_symbols, body = to_transition_formula summary in
+      let projection x = 
+        (List.fold_left 
+          (fun found (vpre,vpost) -> found || vpre == x || vpost == x) 
+            false tr_symbols)
+      in 
+      let psi = Wedge.cover Cra.srk projection body in 
+      let new_summary = of_transition_formula tr_symbols psi in
+      (p_entry, p_exit, new_summary)
+    in
+    List.map postprocess_summary summary_list
+  else 
+    summary_list
+
 let build_summarizer (ts : K.t Cra.label Cra.WG.t) =  
   let program_vars = 
     let open CfgIr in let file = get_gfile() in
@@ -3310,7 +3330,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
       let weight = edge_weight_with_calls weight_of_call in
       WeightedGraph.path_weight path_graph src tgt
       |> NPathexpr.eval (* ~table:query.table *) weight in
-    (* ---------------------- Check for non-recursive SCC ------------------------- *)
+    (* ---------------------- Non-recursive SCC ------------------------- *)
     if (List.length scc.procs == 1 
         && (let (p_entry,p_exit,pathexpr) = List.hd scc.procs in
         IntPairSet.cardinal 
@@ -3319,10 +3339,11 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
       let (p_entry,p_exit,pathexpr) = List.hd scc.procs in
       let single_proc_weight = 
         path_weight_internal p_entry p_exit weight_of_call_zero in
-      [(p_entry,p_exit,project single_proc_weight)])
+      postprocess_summaries
+        [(p_entry,p_exit,project single_proc_weight)])
     else 
     begin
-      (* ---------------------------- Recursive SCC ------------------------------- *)
+      (* -------------------- Recursive SCC ------------------------------ *)
         logf ~level:`info "  Recursive SCC."; 
       let is_linear = 
         List.fold_left (fun so_far (p_entry, p_exit, pathexpr) ->
@@ -3332,14 +3353,12 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
       (if is_linear then logf ~level:`info "  Linear recursion.");
       if is_linear && !chora_linspec then 
       begin
-        handle_linear_recursion scc classify_edge
+        postprocess_summaries
+          (handle_linear_recursion scc classify_edge)
       end 
       else
-      (*if is_linear then 
-        (logf ~level:`info "  Linear recursion.";
-          let _ = handle_linear_recursion scc classify_edge in () )); *)
       begin
-        (* ----------------------- Non-linear recursion --------------------------- *)
+        (* ------------------ Non-linear recursion ----------------------- *)
         logf ~level:`info "  Non-linear recursion.";
         let transition_footprint tr = 
           BatEnum.fold 
@@ -3454,6 +3473,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           make_height_based_summaries
             rec_case_map bounds_map program_vars top_down_formula_map scc height_model in 
 
+        postprocess_summaries
           summary_list 
       end
     end in
@@ -3493,9 +3513,13 @@ let _ =
      Arg.Set chora_print_summaries,
      " Print procedure summaries during the CHORA analysis pass");
   CmdLine.register_config
-    ("-chora-wedges",
+    ("-chora-debug-wedges",
      Arg.Set chora_print_wedges,
-     " Print procedure summaries abstracted to wedges");
+     " Print procedure summaries abstracted to wedges (for display only)");
+  CmdLine.register_config
+    ("-chora-wedgecover",
+     Arg.Set chora_use_wedgecover,
+     " Replace each summary with a disjunction of wedges (used at call sites)");
   (*CmdLine.register_config
     ("-chora-debug-depth-bounds",
      Arg.Set chora_print_depth_bound_wedges,
