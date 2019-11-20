@@ -3,7 +3,7 @@
 #define false 0
 #define true 1
 #include "tick.h"
-int __cost;
+
 bool found;
 int subsetSumSize(int * A, int n) { found = false; return subsetSumSizeAux(A,0,n,0); }
 int subsetSumSizeAux(int * A, int i, int n, int sum) {
