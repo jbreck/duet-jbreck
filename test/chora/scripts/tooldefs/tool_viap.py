@@ -33,7 +33,7 @@ tool["displayname"] = "VIAP"
 tool["root"] = choraconfig.specify_tool_root_requirement("viap","viap_tool.py")
 viap_exe = os.path.join(tool["root"],"viap_tool.py")
 if not os.path.exists(viap_exe) :
-    print "   Could not find the executable file: " + viap
+    print "   Could not find the executable file: " + viap_exe
     sys.exit(0)
 tool["cmd"] = [viap_exe,"--spec={prpfile}","{filename}"]
 tool["precheck"] = viap_precheck
