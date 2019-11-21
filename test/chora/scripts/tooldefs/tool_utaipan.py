@@ -45,7 +45,7 @@ def ua_assert_results(params) :
 def ua_precheck(params) :
     prpfiles = [F for F in os.listdir(params["directory"]) if F.endswith(".prp")]
     if len(prpfiles) != 1 :
-        print "testing.py / tool_ua.py : Error: could not find a unique .prp file in " + params["directory"]
+        print "testing.py / tool_utaipan.py : Error: could not find a unique .prp file in " + params["directory"]
         print "Maybe you want one of the ones from here: https://github.com/sosy-lab/sv-benchmarks/tree/master/c/properties"
         print "  (Jason: I'm guessing that the right one is 'unreach-call.prp')"
         sys.exit(0)
@@ -54,8 +54,8 @@ def ua_precheck(params) :
 
 # really should have a tool root
 tool = choraconfig.get_default_tool_dict() 
-tool["displayname"] = "U. Automizer"
-tool["root"] = choraconfig.specify_tool_root_requirement("ua","Ultimate.py")
+tool["displayname"] = "Utaipan"
+tool["root"] = choraconfig.specify_tool_root_requirement("utaipan","Ultimate.py")
 uapy = os.path.join(tool["root"],"Ultimate.py")
 if not os.path.exists(uapy) :
     print "   Could not find the executable file: " + uapy
