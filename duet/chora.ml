@@ -2646,34 +2646,53 @@ let top_down_formula_to_symbolic_bounds phi sym =
     | None -> false
     (*true*)
   in
-  (* New code suggested by Zak *)
   let symbol_term = Syntax.mk_const Cra.srk sym in
+  let debug_list part = 
+     logf ~level "      -- inner bound list [";
+     List.iter (fun elt -> logf ~level "       %a" (Syntax.Term.pp Cra.srk) elt) part;
+     logf ~level "      -- inner bound list ]"
+  in
+  let debug_list_list parts = 
+     logf ~level "   -- outer bound list [";
+     List.iter (fun part -> debug_list part) parts;
+     logf ~level "   -- outer bound list ]"
+  in
+  let safer_disjoin parts = 
+    match parts with 
+    | [] -> Syntax.mk_true Cra.srk
+    | _ -> Syntax.mk_or Cra.srk parts
+  in
   let to_formula parts = 
     let (lower,upper) = parts in
     (*| None -> Syntax.mk_false Cra.srk
       | Some (lower, upper) ->*)
+    logf ~level " lower bounds: ";
+    debug_list_list lower;
+    logf ~level " upper bounds: ";
+    debug_list_list upper;
     let lower_bounds =
       lower
       |> List.map (fun case ->
           case |> List.map (fun lower_bound -> Syntax.mk_leq Cra.srk lower_bound symbol_term)
           |> Syntax.mk_and Cra.srk)
-      |> Syntax.mk_or Cra.srk
+      |> safer_disjoin
     in
     let upper_bounds =
       upper
       |> List.map (fun case ->
           case |> List.map (fun upper_bound -> Syntax.mk_leq Cra.srk symbol_term upper_bound)
           |> Syntax.mk_and Cra.srk)
-      |> Syntax.mk_or Cra.srk
+      |> safer_disjoin
     in
     Syntax.mk_and Cra.srk [lower_bounds; upper_bounds]
   in
+  logf ~level " sbf-squeeze input: %a " (Syntax.Formula.pp Cra.srk) phi;
   let formula_parts_wrapped = 
       Wedge.symbolic_bounds_formula_list ~exists Cra.srk phi sym in
   match formula_parts_wrapped with
   | `Sat (formula_parts) -> 
       let formula = to_formula formula_parts in 
-      logf ~level " sbf-squeeze formula: %a " (Syntax.Formula.pp Cra.srk) formula;
+      logf ~level " sbf-squeeze output: %a " (Syntax.Formula.pp Cra.srk) formula;
       formula
   | `Unsat ->
       logf ~level:`always " WARNING: sbf-squeeze got unsatisfiable depth formula!";
