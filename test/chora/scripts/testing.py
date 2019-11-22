@@ -862,6 +862,99 @@ def plot_run(outrun) :
         plt.legend(handles=legend_handles)
         fig.savefig(os.path.join(outrun,"cactus_test_" + subset_mode + ".pdf"))
 
+def analyze_single_file(toolid, filename) :
+    if not os.path.exists(filename) :
+        print "File not found: " + filename
+        sys.exit(0)
+    tool = choraconfig.get_tool_by_ID(toolid)
+    #nicename = filename
+    #br_prefix = yes_post_slash(batch.get("root"))
+    #if nicename.startswith(br_prefix) : nicename = nicename[len(br_prefix):]
+    #sys.stdout.write(" " + nicename + " ")
+    #sourcedest = outsources + nicename
+    #choraconfig.makedirs(os.path.dirname(sourcedest))
+    #shutil.copyfile(filename, sourcedest)
+    anyProblem = False
+    handle, tmpfile = tempfile.mkstemp(suffix="choratmpfile.txt")
+    os.close(handle)
+    #logpath = outrun + "/logs/" + nicename + "." + tool.ID + ".log"
+    preproc = None
+    if any(["{preprocessed_filename}" in I for I in tool.get("cmd")]) :
+        preproc=filename
+        if preproc.endswith(".c") : preproc=preproc[:-2]
+        preproc+=".i"
+        subprocess.call(["gcc","-E",filename,"-o",preproc])
+    paramdict = {"filename":filename,
+                 "directory":os.path.dirname(filename),
+                 "tmpfile":tmpfile,
+                 #"logpath":logpath,
+                 "preprocessed_filename":preproc}
+    # Note that the precheck method may modify paramdict
+    if tool.hasattr("precheck") : tool.get("precheck")(paramdict)
+    cmd = [S.format(**paramdict) for S in tool.get("cmd")]
+    #choraconfig.makedirs(os.path.dirname(logpath))
+    startTime = time.time()
+    exitType = "unknown"
+    #sys.stdout.write("["+tool.ID+":")
+    #sys.stdout.flush()
+    timeTaken = -1.0
+    print " ".join(cmd)
+    child = subprocess.Popen(cmd)
+    while True :
+        timeTaken = time.time() - startTime
+        if child.poll() is not None :
+            if (child.returncode != 0 and
+               not tool.flag("nonzero_error_code_is_benign")) :
+                exitType = "error"
+                sys.stdout.write(choraconfig.color_start+
+                                 "ERROR"+
+                                 choraconfig.color_stop+"] ")
+                sys.stdout.flush()
+                anyProblem = True
+                break
+            exitType = "default"
+            #sys.stdout.write("OK] ")
+            #sys.stdout.flush()
+            break
+        #if timeTaken >= batch.get("timeout") :
+        #    child.kill()
+        #    exitType = "timeout"
+        #    sys.stdout.write("T/O] ")
+        #    sys.stdout.flush()
+        #    anyProblem = True
+        #    break
+    ##if tool.hasattr("assert_results") :
+    ##    results = tool.get("assert_results")(paramdict)
+    ##    if tool.flag("no_assert_line_numbers") : 
+    ##        result_str = ";".join(R[0]+"@?" for R in results)
+    ##    else : 
+    ##        results = sorted(results,key=lambda R:R[1])
+    ##        result_str = ";".join(R[0]+"@"+str(R[1]) for R in results)
+    ##    print "chora:testing.py: Assertion results = result_str"
+    print "chora:testing.py: Time taken = " + str(timeTaken)
+        #if batch.flag("instant_unsound_callouts") :
+        #    is_safe = detect_safe_benchmark(filename)
+        #    if is_safe == "unsafe" and any(R[0].startswith("PASS") for R in results) :
+        #        sys.stdout.write("\n   Warning: "+choraconfig.color_start+
+        #                "UNSOUND"+choraconfig.color_stop+" result!\n")
+        #        sys.stdout.write("  ")
+        #        sys.stdout.flush()
+        #        anyProblem = True
+    #if (exitType == "error" and tool.hasattr("error_callout") 
+    #    and batch.flag("instant_error_callouts")) :
+    #    error_raw = tool.get("error_callout")({"logpath":logpath})
+    #    if len(error_raw.strip()) > 0 :
+    #        sys.stdout.write("\n   Possible error-related text in logfile follows:\n")
+    #        for line in error_raw.split("\n") :
+    #            sys.stdout.write("     " + line.rstrip() + "\n")
+    #        sys.stdout.write("  ")
+    #        sys.stdout.flush()
+    os.remove(tmpfile)
+
+
+
+
+
 if __name__ == "__main__" :
     # obviously, I should use a real command-line processing system here
     if len(sys.argv) < 3 :
@@ -884,6 +977,11 @@ if __name__ == "__main__" :
         if len(sys.argv) < 2 : usage()
         outrun = sys.argv[2]
         plot_run(outrun)
+    elif sys.argv[1] == "--single" :
+        if len(sys.argv) < 3 : usage()
+        toolid = sys.argv[2]
+        path = sys.argv[3]
+        analyze_single_file(toolid,path)
     else: usage()
     if "--openhtml" in sys.argv :
         for path in created_html_files :
