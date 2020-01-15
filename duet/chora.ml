@@ -2001,7 +2001,7 @@ let extract_and_solve_recurrences
 (* Called once per SCC per value of allow_decrease *)
 let build_wedge_map 
       b_out_definitions_map b_in_b_out_map b_out_symbols bounds_map 
-      program_vars top_down_formula_map (scc:BURG.scc) rec_fmla_map ~allow_decrease =
+      top_down_formula_map (scc:BURG.scc) rec_fmla_map ~allow_decrease =
   (* For each procedure, create a transition formula for use in extraction *)
   let extraction_formula_map = 
     List.fold_left 
@@ -2033,11 +2033,11 @@ let build_wedge_map
 (* Called once per SCC per value of allow_decrease *)
 let build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      bounds_map program_vars top_down_formula_map 
+      bounds_map top_down_formula_map 
       scc post_height_sym rec_fmla_map ~allow_decrease =
   let wedge_map = build_wedge_map
     b_out_definitions_map b_in_b_out_map b_out_symbols 
-    bounds_map program_vars top_down_formula_map 
+    bounds_map top_down_formula_map 
     scc rec_fmla_map ~allow_decrease in
   extract_and_solve_recurrences 
     b_in_b_out_map wedge_map post_height_sym ~allow_decrease
@@ -2056,7 +2056,7 @@ let make_height_based_summaries
     (* ---------- Extract and solve recurrences --------- *)
     let solution = build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      bounds_map program_vars top_down_formula_map 
+      bounds_map top_down_formula_map 
       scc (post_symbol rb.symbol) rec_fmla_map ~allow_decrease:!chora_just_allow_decrease in
     (* ---------- Build summaries using recurrence solution --------- *)
     let summary_list = 
@@ -2077,12 +2077,12 @@ let make_height_based_summaries
     (* ---------- Extract and solve recurrences --------- *)
     let rm_solution = build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      bounds_map program_vars top_down_formula_map 
+      bounds_map top_down_formula_map 
       scc (post_symbol rm.symbol) rec_fmla_map ~allow_decrease:true in
     (* *)
     let mb_solution = build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      bounds_map program_vars top_down_formula_map 
+      bounds_map top_down_formula_map 
       scc (post_symbol mb.symbol) rec_fmla_map ~allow_decrease:false in
     (* ---------- Build summaries using recurrence solution --------- *)
     let excepting = List.fold_left (fun excepting v -> 
