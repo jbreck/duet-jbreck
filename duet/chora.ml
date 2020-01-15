@@ -2045,7 +2045,7 @@ let build_wedges_and_extract_recurrences
 
 let make_height_based_summaries
       rec_fmla_map bounds_map program_vars top_down_formula_map 
-      (scc:BURG.scc) height_model =
+      (scc:BURG.scc) height_model excepting =
   (* *)
   let (b_out_definitions_map, b_in_b_out_map, b_out_symbols) = 
     make_outer_bounding_symbols scc bounds_map in 
@@ -2085,12 +2085,6 @@ let make_height_based_summaries
       bounds_map top_down_formula_map 
       scc (post_symbol mb.symbol) rec_fmla_map ~allow_decrease:false in
     (* ---------- Build summaries using recurrence solution --------- *)
-    let excepting = List.fold_left (fun excepting v -> 
-        let sym = Cra.V.symbol_of v in 
-        let excepting = Srk.Syntax.Symbol.Set.add sym excepting in 
-        Srk.Syntax.Symbol.Set.add (post_symbol sym) excepting)
-      Srk.Syntax.Symbol.Set.empty
-      (rb.value::rm.value::mb.value::program_vars) in 
     let summary_list = 
       List.fold_left (fun sums (p_entry,p_exit,pathexpr) ->
         let top_down_formula = 
@@ -2928,13 +2922,23 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           scc.procs in 
 
         let simple_height = make_variable (if !chora_dual then "RB" else "H") in 
-        let height_model = 
+        let (height_model, excepting) = 
           if !chora_dual then 
             let rm = make_variable "RM" in 
             let mb = make_variable "MB" in 
-            RB_RM_MB (simple_height (* that is, rb *), rm, mb)
+            (* When we perform dual-height analysis, we make two copies each (one "lower",
+               one "upper") of most of the symbols in our vocabulary, but there
+               are some exceptions, i.e., symbols that should not be copied.  The variable
+               excepting holds the list of such symbols *)
+            let excepting = List.fold_left (fun excepting v -> 
+                let sym = Cra.V.symbol_of v in 
+                let excepting = Srk.Syntax.Symbol.Set.add sym excepting in 
+                Srk.Syntax.Symbol.Set.add (post_symbol sym) excepting)
+              Srk.Syntax.Symbol.Set.empty
+              (simple_height.value::rm.value::mb.value::program_vars) in 
+            (RB_RM_MB (simple_height (* that is, rb *), rm, mb), excepting)
           else 
-            RB (simple_height) in 
+            (RB (simple_height), Srk.Syntax.Symbol.Set.empty) in 
 
         logf ~level:`info "  Beginning top-down analysis"; 
         (*   ***   Compute top-down summaries for each procedure   ***   *)
@@ -3001,7 +3005,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
 
         let summary_fmla_list = 
           make_height_based_summaries
-            rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model in
+            rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model excepting in
 
         let summary_list = List.map (fun (p_entry,p_exit,summary_fmla) ->
             (* Produce the final summary from this conjunction formula *)
