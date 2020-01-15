@@ -1307,22 +1307,25 @@ let build_height_based_summary
     Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
   log_fmla_proc "@.    bddg conj%t: %a" p_entry p_exit bounding_conjunction; 
   (* top_down formula /\ (solution with b_in = 0) /\ each term <= each b_out *)
-  let big_conjunction = 
+  let height_based_summary_fmla = 
     Srk.Syntax.mk_and Cra.srk [top_down_formula; 
                                solution_starting_at_zero;
                                bounding_conjunction] in
-  log_fmla_proc "@.    big conj%t: %a" p_entry p_exit big_conjunction; 
-  (* Produce the final summary from this conjunction formula *)
-  (*     FIXME: I should really be iterating over the SCC footprint variables,
-                not over the list of all program variables. *)
-  let final_tr_symbols = 
-    List.map (fun var -> 
-      let pre_sym = Cra.V.symbol_of var in 
-      let post_sym = post_symbol pre_sym in 
-      (pre_sym,post_sym)) program_vars in 
-  let height_based_summary = of_transition_formula final_tr_symbols big_conjunction in 
-  log_tr_proc "@.    HBA_summary%t = " p_entry p_exit height_based_summary;
-  height_based_summary
+  log_fmla_proc "@.    HBA_summary_fmla%t: %a" p_entry p_exit height_based_summary_fmla; 
+  height_based_summary_fmla
+  (*
+    (* Produce the final summary from this conjunction formula *)
+    (*     FIXME: I should really be iterating over the SCC footprint variables,
+                  not over the list of all program variables. *)
+    let final_tr_symbols = 
+      List.map (fun var -> 
+        let pre_sym = Cra.V.symbol_of var in 
+        let post_sym = post_symbol pre_sym in 
+        (pre_sym,post_sym)) program_vars in 
+    let height_based_summary = of_transition_formula final_tr_symbols height_based_summary_fmla in 
+    log_tr_proc "@.    HBA_summary%t = " p_entry p_exit height_based_summary;
+    height_based_summary
+  *)
 
 let substitute_one_sym formula old_sym new_sym =  
   let subst_rule sym = 
@@ -1439,20 +1442,23 @@ let build_dual_height_summary
   end else [] in 
   (* ==============  End of Fallback section   ============== *)
   (* big_conjunction *)
-  let big_conjunction = Srk.Syntax.mk_and Cra.srk 
+  let dual_height_summary_fmla = Srk.Syntax.mk_and Cra.srk 
     (first_part @ fallback @ last_part) in
-  log_fmla_proc "@.    DHA conj%t: %a" p_entry p_exit big_conjunction; 
-  (* Produce the final summary from this conjunction formula *)
-  (*     FIXME: I should really be iterating over the SCC footprint variables,
-                not over the list of all program variables. *)
-  let final_tr_symbols = 
-    List.map (fun var -> 
-      let pre_sym = Cra.V.symbol_of var in 
-      let post_sym = post_symbol pre_sym in 
-      (pre_sym,post_sym) ) program_vars in 
-  let dual_height_summary = of_transition_formula final_tr_symbols big_conjunction in 
-  log_tr_proc "@.    DHA_summary%t = " p_entry p_exit dual_height_summary;
-  dual_height_summary
+  log_fmla_proc "@.    DHA conj%t: %a" p_entry p_exit dual_height_summary_fmla; 
+  dual_height_summary_fmla
+  (*
+    (* Produce the final summary from this conjunction formula *)
+    (*     FIXME: I should really be iterating over the SCC footprint variables,
+                  not over the list of all program variables. *)
+    let final_tr_symbols = 
+      List.map (fun var -> 
+        let pre_sym = Cra.V.symbol_of var in 
+        let post_sym = post_symbol pre_sym in 
+        (pre_sym,post_sym) ) program_vars in 
+    let dual_height_summary = of_transition_formula final_tr_symbols dual_height_summary_fmla in 
+    log_tr_proc "@.    DHA_summary%t = " p_entry p_exit dual_height_summary;
+    dual_height_summary
+  *)
 
 let sanity_check_recurrences recurrences term_of_id = 
   (if not ((List.length recurrences.blk_transforms) ==
@@ -2989,9 +2995,27 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           IntPairMap.empty 
           scc.procs in 
 
-        let summary_list = 
+        (*let summary_list = 
           make_height_based_summaries
-            rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model in 
+            rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model in*)
+
+        let summary_fmla_list = 
+          make_height_based_summaries
+            rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model in
+
+        let summary_list = List.map (fun (p_entry,p_exit,summary_fmla) ->
+            (* Produce the final summary from this conjunction formula *)
+            (*     FIXME: I should really be iterating over the SCC footprint variables,
+                          not over the list of all program variables. *)
+            let final_tr_symbols = 
+              List.map (fun var -> 
+                let pre_sym = Cra.V.symbol_of var in 
+                let post_sym = post_symbol pre_sym in 
+                (pre_sym,post_sym) ) program_vars in 
+            let summary_weight = of_transition_formula final_tr_symbols summary_fmla in 
+            log_tr_proc "@.    Final_summary%t = " p_entry p_exit summary_weight;
+            (p_entry,p_exit,summary_weight))
+          summary_fmla_list in 
 
         postprocess_summaries
           summary_list 
