@@ -1027,9 +1027,10 @@ let increment_variable value =
       [(Srk.Syntax.mk_const Cra.srk (Cra.V.symbol_of value));
        (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int 1))])
 
-let mk_call_abstraction base_case_weight scc_global_footprint = 
+(*let make_call_abstraction base_case_weight scc_global_footprint = 
   let (tr_symbols, body) = 
-      to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
+      to_transition_formula_with_unmodified base_case_weight scc_global_footprint in*)
+let make_call_abstraction base_case_fmla tr_symbols = 
   let param_prime = Str.regexp "param[0-9]+'" in
   let projection x = 
     (
@@ -1046,7 +1047,7 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
       | None -> false (* false *)
     ))
   in 
-  let wedge = Wedge.abstract ~exists:projection Cra.srk body in 
+  let wedge = Wedge.abstract ~exists:projection Cra.srk base_case_fmla in 
   logf ~level:`info "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
   let cs = Wedge.coordinate_system wedge in 
   let bounding_atoms = ref [] in
@@ -2953,11 +2954,14 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
         let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
             let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
-            let bounds = mk_call_abstraction base_case_weight scc_global_footprint in 
+            (*let bounds = make_call_abstraction base_case_weight scc_global_footprint in *)
+            let (tr_symbols, base_case_fmla) = 
+                to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
+            let bounds = make_call_abstraction base_case_fmla tr_symbols in 
             IntPairMap.add (p_entry,p_exit) bounds b_map)
           IntPairMap.empty 
           scc.procs in 
-        (* Construct the recursive-case weight *)
+        (* Construct the recursive-case weight using the formula computed by make_call_abstraction *)
         let call_abstraction_weight_map = IntPairMap.mapi
           (fun (p_entry,p_exit) info_structure ->
             let call_abstraction_weight = 
