@@ -998,7 +998,7 @@ let debug_print_wedge_of_transition ?(levelParam=None) tr =
 
 type 'a bound_info = {
   bound_pairs : (Srk.Syntax.symbol * 'a Srk.Syntax.term) list;
-  recursion_flag : Cra.value;
+  (*recursion_flag : Cra.value;*)
   call_abstraction : K.t
 }
 
@@ -1078,16 +1078,16 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
     | (`Geq, vec) ->
       add_bounding_var vec true in 
   List.iter handle_constraint (Wedge.polyhedron wedge);
-  let rec_flag_var_sym_pair = make_variable "Recursion_Flag" in
-  (*let rec_flag_var = Core.Var.mk (Core.Varinfo.mk_global "Recursion_Flag" ( Core.Concrete (Core.Int 32))) in 
+  (*let rec_flag_var_sym_pair = make_variable "Recursion_Flag" in
+  let rec_flag_var = Core.Var.mk (Core.Varinfo.mk_global "Recursion_Flag" ( Core.Concrete (Core.Int 32))) in 
     let rec_flag_val = Cra.VVal rec_flag_var in 
-    let _ = Cra.V.symbol_of rec_flag_val in (* Add to symbol table... (HACK!) *) *)
-  let set_rec_flag = assign_value_to_literal rec_flag_var_sym_pair.value 1 in 
+    let _ = Cra.V.symbol_of rec_flag_val in (* Add to symbol table... (HACK!) *)
+  let set_rec_flag = assign_value_to_literal rec_flag_var_sym_pair.value 1 in *)
   let call_abstraction_fmla = Srk.Syntax.mk_and Cra.srk (!bounding_atoms) in 
   let call_abstraction_weight = of_transition_formula tr_symbols call_abstraction_fmla in 
     {bound_pairs = !bound_list;
-     recursion_flag = rec_flag_var_sym_pair.value;
-     call_abstraction = K.mul set_rec_flag call_abstraction_weight}
+     (*recursion_flag = rec_flag_var_sym_pair.value;*)
+     call_abstraction = (*K.mul set_rec_flag*) call_abstraction_weight}
 
 type 'a recurrence_collection = {
   done_symbols: int Srk.Syntax.Symbol.Map.t; (* accepted *)
