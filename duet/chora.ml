@@ -19,6 +19,20 @@ module VarSet = BatSet.Make(Cra.V)
 include Log.Make(struct let name = "chora" end)
 module A = Interproc.MakePathExpr(K)
 
+(*let srk = Cra.srk *)
+
+
+module type AuxVarHandler = sig
+  type t (* type of an auxiliary variable *)
+         (*   e.g., a Cra.value *)
+  type val_sym = { 
+      value: t; 
+      symbol: Srk.Syntax.symbol
+  }
+  val make_variable : string -> val_sym
+  val srk : 'a Syntax.context
+end;;
+
 (* ---------------------------------- *)
 (*    Begin stuff from old pathexpr   *)
 
@@ -526,6 +540,8 @@ module U = Graph.Persistent.Digraph.ConcreteBidirectional(SrkUtil.Int)
 
 type 'a weighted_graph = 'a WeightedGraph.weighted_graph
 
+
+
 let project = K.exists Cra.V.is_global
 
 
@@ -989,11 +1005,11 @@ type 'a bound_info = {
 let assign_value_to_literal value literal = 
   K.assign value (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal))
 
-let assume_value_eq_literal value literal = 
+(*let assume_value_eq_literal value literal = 
   let var = Cra.V.symbol_of value in 
   K.assume (Srk.Syntax.mk_eq Cra.srk 
     (Srk.Syntax.mk_const Cra.srk var)
-    (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal)))
+    (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal)))*)
 
 let assume_literal_leq_value literal value = 
   let var = Cra.V.symbol_of value in 
