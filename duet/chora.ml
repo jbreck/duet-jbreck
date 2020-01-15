@@ -2327,6 +2327,7 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
     IntPairMap.empty procs) in
   td_formula_map;;
 
+(*
 let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges = 
   let height_var_sym_pair = make_variable "H" in
   (*let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
@@ -2355,6 +2356,7 @@ let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges
   let is_post_height (pre_sym,post_sym) = (pre_sym == height_var_sym_pair.symbol) in 
   let post_height_sym = snd (List.find is_post_height top_down_symbols) in
   top_down_formula, post_height_sym;;
+*)
 
 let get_procedure_summary query rg procedure = 
   let entry = (RG.block_entry rg procedure).did in
