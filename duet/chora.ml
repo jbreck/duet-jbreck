@@ -1827,7 +1827,7 @@ let make_outer_bounding_symbols_for_proc
   (local_b_out_definitions, b_in_b_out_map, b_out_symbols, body)
 
 (* Called once per SCC *)
-let make_outer_bounding_symbols (scc:BURG.scc) rec_case_map bounds_map =
+let make_outer_bounding_symbols (scc:BURG.scc) rec_weight_map bounds_map =
   let b_in_b_out_map = Srk.Syntax.Symbol.Map.empty in 
   let b_out_symbols = Srk.Syntax.Symbol.Set.empty in
   let b_out_definitions_map = IntPairMap.empty in 
@@ -1836,7 +1836,7 @@ let make_outer_bounding_symbols (scc:BURG.scc) rec_case_map bounds_map =
     (fun 
       (b_out_definitions_map, b_in_b_out_map, b_out_symbols, body_map)
       (p_entry,p_exit,pathexpr) ->
-      let rec_weight_nobc = IntPairMap.find (p_entry,p_exit) rec_case_map in 
+      let rec_weight_nobc = IntPairMap.find (p_entry,p_exit) rec_weight_map in 
       let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
       let local_b_out_definitions, b_in_b_out_map, b_out_symbols, body = 
         make_outer_bounding_symbols_for_proc 
@@ -1852,7 +1852,7 @@ let make_outer_bounding_symbols (scc:BURG.scc) rec_case_map bounds_map =
 
 (* Called once per procedure per value of allow_decrease *)
 let make_extraction_formula 
-    recursive_weight_nobc bounds local_b_out_definitions b_in_b_out_map 
+    (*recursive_weight_nobc*) bounds local_b_out_definitions b_in_b_out_map 
     b_out_symbols body ~allow_decrease =
   (* *)
   (* ----- These lines assume every b_in is non-negative. ----- *)
@@ -2006,21 +2006,21 @@ let extract_and_solve_recurrences
 
 (* Called once per SCC per value of allow_decrease *)
 let build_wedge_map 
-      b_out_definitions_map b_in_b_out_map b_out_symbols rec_case_map bounds_map 
+      b_out_definitions_map b_in_b_out_map b_out_symbols (*rec_weight_map*) bounds_map 
       program_vars top_down_formula_map (scc:BURG.scc) body_map ~allow_decrease =
   (* For each procedure, create a transition formula for use in extraction *)
   let extraction_formula_map = 
     List.fold_left 
       (fun extraction_formula_map
         (p_entry,p_exit,pathexpr) ->
-      let rec_weight_nobc = IntPairMap.find (p_entry,p_exit) rec_case_map in 
+      (*let rec_weight_nobc = IntPairMap.find (p_entry,p_exit) rec_weight_map in*)
       let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
       let body = IntPairMap.find (p_entry,p_exit) body_map in 
       let local_b_out_definitions = 
         IntPairMap.find (p_entry,p_exit) b_out_definitions_map in 
       let extraction_formula = 
         make_extraction_formula 
-          rec_weight_nobc bounds local_b_out_definitions
+          (*rec_weight_nobc*) bounds local_b_out_definitions
           b_in_b_out_map b_out_symbols body ~allow_decrease in
       IntPairMap.add (p_entry,p_exit) extraction_formula extraction_formula_map)
     IntPairMap.empty
@@ -2040,22 +2040,22 @@ let build_wedge_map
 (* Called once per SCC per value of allow_decrease *)
 let build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      rec_case_map bounds_map program_vars top_down_formula_map 
+      (*rec_weight_map*) bounds_map program_vars top_down_formula_map 
       scc post_height_sym body_map ~allow_decrease =
   let wedge_map = build_wedge_map
     b_out_definitions_map b_in_b_out_map b_out_symbols 
-    rec_case_map bounds_map program_vars top_down_formula_map 
+    (*rec_weight_map*) bounds_map program_vars top_down_formula_map 
     scc body_map ~allow_decrease in
   extract_and_solve_recurrences 
     b_in_b_out_map wedge_map post_height_sym ~allow_decrease
   (* returns solution *)
 
 let make_height_based_summaries
-      rec_case_map bounds_map program_vars top_down_formula_map 
+      rec_weight_map bounds_map program_vars top_down_formula_map 
       (scc:BURG.scc) height_model =
   (* *)
   let (b_out_definitions_map, b_in_b_out_map, b_out_symbols, body_map) = 
-    make_outer_bounding_symbols scc rec_case_map bounds_map in 
+    make_outer_bounding_symbols scc rec_weight_map bounds_map in 
   match height_model with 
   (* *********************************************************************** *)
   (* ********                Height-based Analysis                  ******** *)
@@ -2063,7 +2063,7 @@ let make_height_based_summaries
     (* ---------- Extract and solve recurrences --------- *)
     let solution = build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      rec_case_map bounds_map program_vars top_down_formula_map 
+      (*rec_weight_map*) bounds_map program_vars top_down_formula_map 
       scc (post_symbol rb.symbol) body_map ~allow_decrease:!chora_just_allow_decrease in
     (* ---------- Build summaries using recurrence solution --------- *)
     let summary_list = 
@@ -2084,12 +2084,12 @@ let make_height_based_summaries
     (* ---------- Extract and solve recurrences --------- *)
     let rm_solution = build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      rec_case_map bounds_map program_vars top_down_formula_map 
+      (*rec_weight_map*) bounds_map program_vars top_down_formula_map 
       scc (post_symbol rm.symbol) body_map ~allow_decrease:true in
     (* *)
     let mb_solution = build_wedges_and_extract_recurrences 
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      rec_case_map bounds_map program_vars top_down_formula_map 
+      (*rec_weight_map*) bounds_map program_vars top_down_formula_map 
       scc (post_symbol mb.symbol) body_map ~allow_decrease:false in
     (* ---------- Build summaries using recurrence solution --------- *)
     let excepting = List.fold_left (fun excepting v -> 
@@ -2976,8 +2976,8 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           callee_bounds.call_abstraction_weight in*)
           IntPairMap.find (cen,cex) call_abstraction_weight_map in
 
-        (*   ***   Compute the recursive-case weight for each procedure  ***   *)
-        let rec_case_map = List.fold_left (fun rc_map (p_entry,p_exit,pathexpr) ->
+        (*   ***   Compute the recursive-case weight/formula for each procedure  ***   *)
+        let rec_weight_map = List.fold_left (fun rw_map (p_entry,p_exit,pathexpr) ->
             (* WARNING: the following line isn't precise unless you take special action to
                  remove the base case later... *)
             (*let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
@@ -2989,13 +2989,13 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             logf ~level:`info "  recursive_weight-BC%t = [" (proc_name_triple p_entry p_exit);
             print_indented 15 recursive_weight_nobc;
             logf ~level:`info "  ]"; 
-            IntPairMap.add (p_entry,p_exit) recursive_weight_nobc rc_map)
+            IntPairMap.add (p_entry,p_exit) recursive_weight_nobc rw_map)
           IntPairMap.empty 
           scc.procs in 
 
         let summary_list = 
           make_height_based_summaries
-            rec_case_map bounds_map program_vars top_down_formula_map scc height_model in 
+            rec_weight_map bounds_map program_vars top_down_formula_map scc height_model in 
 
         postprocess_summaries
           summary_list 
