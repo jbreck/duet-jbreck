@@ -1290,7 +1290,7 @@ let rename_b_in_to_zero b_in_b_out_map solution =
  *      we started from a recurrence solution that is the same for all
  *      procedures in the current SCC. *)
 let build_height_based_summary 
-    solution b_in_b_out_map bounds top_down_formula program_vars 
+    solution b_in_b_out_map bounds top_down_formula 
     p_entry p_exit = 
   (* b_in = 0: In the height-based analysis, initial b_in values equal zero *)
   let solution_starting_at_zero = rename_b_in_to_zero b_in_b_out_map solution in 
@@ -1362,7 +1362,7 @@ let rb_some_symbols formula excepting =
      each other do so, and the ones that aren't don't. *)
 let build_dual_height_summary 
       rb rm mb rm_solution mb_solution b_in_b_out_map bounds top_down_formula 
-      excepting program_vars p_entry p_exit height_model = 
+      excepting p_entry p_exit height_model = 
   (* F1: rb top-down formula (Root-->Baseline), serving to constrain rb *)
   let rb_topdown = lower_some_symbols top_down_formula excepting in
   log_fmla_proc "@.    rb_tdf%t: %a" p_entry p_exit rb_topdown;
@@ -2044,7 +2044,7 @@ let build_wedges_and_extract_recurrences
   (* returns solution *)
 
 let make_height_based_summaries
-      rec_fmla_map bounds_map program_vars top_down_formula_map 
+      rec_fmla_map bounds_map top_down_formula_map 
       (scc:BURG.scc) height_model excepting =
   (* *)
   let (b_out_definitions_map, b_in_b_out_map, b_out_symbols) = 
@@ -2065,7 +2065,7 @@ let make_height_based_summaries
             IntPairMap.find (p_entry,p_exit) top_down_formula_map in 
         let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
         let summary = build_height_based_summary 
-          solution b_in_b_out_map bounds top_down_formula program_vars p_entry p_exit in
+          solution b_in_b_out_map bounds top_down_formula p_entry p_exit in
         (p_entry,p_exit,summary)::sums)
       []
       scc.procs in 
@@ -2092,7 +2092,7 @@ let make_height_based_summaries
         let bounds = IntPairMap.find (p_entry,p_exit) bounds_map in 
         let summary = build_dual_height_summary
           rb rm mb rm_solution mb_solution b_in_b_out_map bounds 
-          top_down_formula excepting program_vars p_entry p_exit 
+          top_down_formula excepting p_entry p_exit 
           height_model in
         (p_entry,p_exit,summary)::sums)
       []
@@ -3005,7 +3005,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
 
         let summary_fmla_list = 
           make_height_based_summaries
-            rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model excepting in
+            rec_fmla_map bounds_map top_down_formula_map scc height_model excepting in
 
         let summary_list = List.map (fun (p_entry,p_exit,summary_fmla) ->
             (* Produce the final summary from this conjunction formula *)
