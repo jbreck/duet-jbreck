@@ -999,7 +999,9 @@ let debug_print_wedge_of_transition ?(levelParam=None) tr =
 type 'a bound_info = {
   bound_pairs : (Srk.Syntax.symbol * 'a Srk.Syntax.term) list;
   (*recursion_flag : Cra.value;*)
-  call_abstraction_weight : K.t
+  (*call_abstraction_weight : K.t;*)
+  tr_symbols : (Srk.Syntax.symbol * Srk.Syntax.symbol) list;
+  call_abstraction_fmla : 'a Srk.Syntax.formula
 }
 
 let assign_value_to_literal value literal = 
@@ -1084,10 +1086,12 @@ let mk_call_abstraction base_case_weight scc_global_footprint =
     let _ = Cra.V.symbol_of rec_flag_val in (* Add to symbol table... (HACK!) *)
   let set_rec_flag = assign_value_to_literal rec_flag_var_sym_pair.value 1 in *)
   let call_abstraction_fmla = Srk.Syntax.mk_and Cra.srk (!bounding_atoms) in 
-  let call_abstraction_weight = of_transition_formula tr_symbols call_abstraction_fmla in 
+  (*let call_abstraction_weight = of_transition_formula tr_symbols call_abstraction_fmla in*)
     {bound_pairs = !bound_list;
      (*recursion_flag = rec_flag_var_sym_pair.value;*)
-     call_abstraction_weight = (*K.mul set_rec_flag*) call_abstraction_weight}
+     (*call_abstraction_weight = K.mul set_rec_flag call_abstraction_weight *)(*}*)
+     tr_symbols = tr_symbols;
+     call_abstraction_fmla = (*K.mul set_rec_flag*) call_abstraction_fmla}
 
 type 'a recurrence_collection = {
   done_symbols: int Srk.Syntax.Symbol.Map.t; (* accepted *)
@@ -2950,20 +2954,26 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
             let base_case_weight = IntPairMap.find (p_entry,p_exit) base_case_map in 
             let bounds = mk_call_abstraction base_case_weight scc_global_footprint in 
-            logf ~level:`info "  call_abstration%t = [" (proc_name_triple p_entry p_exit); 
-            print_indented 15 bounds.call_abstraction_weight; logf ~level:`info "  ]";
             IntPairMap.add (p_entry,p_exit) bounds b_map)
           IntPairMap.empty 
           scc.procs in 
+        (* Construct the recursive-case weight *)
+        let call_abstraction_weight_map = IntPairMap.mapi
+          (fun (p_entry,p_exit) info_structure ->
+            let call_abstraction_weight = 
+              of_transition_formula info_structure.tr_symbols info_structure.call_abstraction_fmla in
+            logf ~level:`info "  call_abstration%t = [" (proc_name_triple p_entry p_exit); 
+            print_indented 15 call_abstraction_weight; logf ~level:`info "  ]";
+            call_abstraction_weight)
+          bounds_map in
+        (* Define a function for handling calls to each procedure in the SCC *)
+        let weight_of_call_rec cs ct cen cex = 
+          (*let callee_bounds = IntPairMap.find (cen,cex) bounds_map in
+          callee_bounds.call_abstraction_weight in*)
+          IntPairMap.find (cen,cex) call_abstraction_weight_map in
 
         (*   ***   Compute the recursive-case weight for each procedure  ***   *)
         let rec_case_map = List.fold_left (fun rc_map (p_entry,p_exit,pathexpr) ->
-            (* Define a way of handling calls to each procedure in the SCC *)
-            let weight_of_call_rec cs ct cen cex = 
-              let callee_bounds = IntPairMap.find (cen,cex) bounds_map in
-              callee_bounds.call_abstraction_weight in
-            (* Construct the recursive-case weight *)
-            (* *)
             (* WARNING: the following line isn't precise unless you take special action to
                  remove the base case later... *)
             (*let recursive_weight = path_weight_internal p_entry p_exit weight_of_call_rec in
