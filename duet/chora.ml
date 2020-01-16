@@ -39,12 +39,6 @@ module AuxVarModuleC = struct
     let new_var_sym = Cra.V.symbol_of new_var_val in 
     {value  = new_var_val;
      symbol = new_var_sym}
-  type height_model_type = 
-      (* Root to baseline of tree *)
-      | RB of val_sym 
-      (* Root to baseline, root to midline, midline to baseline *)
-      (*   where the midline is defined as the depth of the shallowest leaf *)
-      | RB_RM_MB of val_sym * val_sym * val_sym 
 
   let is_var_global x = 
     match Cra.V.of_symbol x with 

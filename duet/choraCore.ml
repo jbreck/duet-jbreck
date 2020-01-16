@@ -10,14 +10,8 @@ module type AuxVarModule = sig
       symbol: Srk.Syntax.symbol
   }
   val make_aux_variable : string -> val_sym
-  type height_model_type = 
-      (* Root to baseline of tree *)
-      | RB of val_sym 
-      (* Root to baseline, root to midline, midline to baseline *)
-      (*   where the midline is defined as the depth of the shallowest leaf *)
-      | RB_RM_MB of val_sym * val_sym * val_sym 
 
-  val is_var_global : Srk.Syntax.symbol -> bool
+  val is_var_global : Srk.Syntax.symbol -> bool (* probably not really needed *)
 
   val post_symbol : Srk.Syntax.symbol -> Srk.Syntax.symbol
 
@@ -34,6 +28,13 @@ end;;
 module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   include Proc
   include Aux
+
+  type height_model_type = 
+    (* Root to baseline of tree *)
+    | RB of val_sym 
+    (* Root to baseline, root to midline, midline to baseline *)
+    (*   where the midline is defined as the depth of the shallowest leaf *)
+    | RB_RM_MB of val_sym * val_sym * val_sym 
 
   open BatPervasives (* Gives you the "--" operator, maybe *)
 
