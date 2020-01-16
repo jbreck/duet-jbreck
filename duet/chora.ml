@@ -19,22 +19,26 @@ module VarSet = BatSet.Make(Cra.V)
 include Log.Make(struct let name = "chora" end)
 module A = Interproc.MakePathExpr(K)
 
-(*let srk = Cra.srk *)
-
-module type AuxVarHandler = sig
-  type t (* type of an auxiliary variable *)
+module type AuxVarModule = sig
+  type val_t (* type of an auxiliary variable *)
          (*   e.g., a Cra.value *)
   type val_sym = { 
-      value: t; 
+      value: val_t; 
       symbol: Srk.Syntax.symbol
   }
   val make_aux_variable : string -> val_sym
+  type height_model_type = 
+      (* Root to baseline of tree *)
+      | RB of val_sym 
+      (* Root to baseline, root to midline, midline to baseline *)
+      (*   where the midline is defined as the depth of the shallowest leaf *)
+      | RB_RM_MB of val_sym * val_sym * val_sym 
 
   type srk_ctx_magic
   val srk : srk_ctx_magic Srk.Syntax.context
 end;;
 
-module type ProcHandler = sig
+module type ProcModule = sig
   module ProcMap : BatMap.S
   val proc_name_triple_string : ProcMap.key -> string
   val proc_name_string : ProcMap.key -> string
@@ -48,8 +52,8 @@ end
 module IntPairMap = BatMap.Make(IntPair)
 module IntPairSet = BatSet.Make(IntPair)
 
-module AuxHandlerC = struct
-  type t = Cra.value
+module AuxVarModuleC = struct
+  type val_t = Cra.value
   type val_sym = { 
       value: Cra.value; 
       symbol: Srk.Syntax.symbol
@@ -61,6 +65,12 @@ module AuxHandlerC = struct
     let new_var_sym = Cra.V.symbol_of new_var_val in 
     {value  = new_var_val;
      symbol = new_var_sym}
+  type height_model_type = 
+      (* Root to baseline of tree *)
+      | RB of val_sym 
+      (* Root to baseline, root to midline, midline to baseline *)
+      (*   where the midline is defined as the depth of the shallowest leaf *)
+      | RB_RM_MB of val_sym * val_sym * val_sym 
 
   type srk_ctx_magic = Cra.Ctx.t
   let srk = Cra.srk
@@ -68,10 +78,10 @@ module AuxHandlerC = struct
 
 end
 
-module ProcHandlerC = struct
-  module ProcMap = IntPairMap
+let procedure_names_map = ref IntPairMap.empty
 
-  let procedure_names_map = ref ProcMap.empty
+module ProcModuleC = struct
+  module ProcMap = IntPairMap
 
   let proc_name_triple_string (entry,exit) = 
     if ProcMap.mem (entry,exit) !procedure_names_map then 
@@ -88,67 +98,37 @@ module ProcHandlerC = struct
       Format.sprintf "<unknown procedure(%d,%d)>" entry exit
 end
 
-module MakeChoraCore (Proc:ProcHandler)(Aux:AuxVarHandler) = struct
+module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
+  include Proc
+  include Aux
+
+  let log_fmla_proc ?(level=`info) formatter proc_key formula = 
+    logf ~level formatter (proc_name_triple_string proc_key)
+        (Srk.Syntax.Formula.pp srk) formula
+
   (* XXX *)
+
 
 end
 
-module ChoraC = MakeChoraCore(ProcHandlerC)(AuxHandlerC)
+module ChoraC = MakeChoraCore(ProcModuleC)(AuxVarModuleC)
 
-module ProcMap = IntPairMap
-
-let procedure_names_map = ref ProcMap.empty
-
-let proc_name_triple_string (entry,exit) = 
-  if ProcMap.mem (entry,exit) !procedure_names_map then 
-    let name = ProcMap.find (entry,exit) !procedure_names_map in
-    Format.sprintf "(%d,%d,\"%s\")" entry exit name
-  else
-    Format.sprintf "(%d,%d,?)" entry exit
-
-let proc_name_string (entry,exit) = 
-  if ProcMap.mem (entry,exit) !procedure_names_map then 
-    let name = ProcMap.find (entry,exit) !procedure_names_map in
-    Format.sprintf "%s" name
-  else
-    Format.sprintf "<unknown procedure(%d,%d)>" entry exit
-
-(*
-let proc_name_triple entry exit channel = 
-  if ProcMap.mem (entry,exit) !procedure_names_map then 
-    let name = ProcMap.find (entry,exit) !procedure_names_map in
-    Format.fprintf channel "(%d,%d,\"%s\")" entry exit name
-  else
-    Format.fprintf channel "(%d,%d,?)" entry exit
-
-let proc_name entry exit channel = 
-  if ProcMap.mem (entry,exit) !procedure_names_map then 
-    let name = ProcMap.find (entry,exit) !procedure_names_map in
-    Format.fprintf channel "%s" name
-  else
-    Format.fprintf channel "<unknown procedure(%d,%d)>" entry exit
-*)
+open ChoraC
 
 (* ugly: copied from newtonDomain just for debugging *)
 let print_indented ?(level=`info) indent k =
-      logf ~level:level "%a"
-      (fun f () -> Format.printf "%s"
-          (SrkUtil.mk_show (fun formatter tr ->
-              Format.pp_open_vbox formatter indent;
-              Format.pp_print_break formatter 0 0;
-              Format.fprintf formatter "%a" K.pp tr;
-              Format.pp_close_box formatter ()) k)) ()
-
-let log_fmla_proc ?(level=`info) formatter proc_key formula = 
-  logf ~level formatter (proc_name_triple_string proc_key)
-      (Srk.Syntax.Formula.pp Cra.srk) formula
+  logf ~level:level "%a"
+  (fun f () -> Format.printf "%s"
+    (SrkUtil.mk_show (fun formatter tr ->
+      Format.pp_open_vbox formatter indent;
+      Format.pp_print_break formatter 0 0;
+      Format.fprintf formatter "%a" K.pp tr;
+      Format.pp_close_box formatter ()) k)) ()
 
 let log_tr_proc ?(level=`info) formatter p_entry p_exit tr = 
   logf ~level formatter (proc_name_triple_string (p_entry,p_exit));
   print_indented 17 tr;
   logf ~level "@."
-
-
 
 (* ---------------------------------- *)
 (*    Begin stuff from old pathexpr   *)
@@ -952,7 +932,9 @@ let chora_dual = ref false (* compute non-trivial lower bounds in addition to up
 let chora_fallback = ref false
 let chora_just_allow_decrease = ref false (* WARNING: it's unsound to set this to true *)
 
-type val_sym = { 
+(* ZZZ *)
+
+(*type val_sym = { 
     value: Cra.value; 
     symbol:Srk.Syntax.symbol
 }
@@ -969,7 +951,7 @@ let make_aux_variable name =
   (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
   let new_var_sym = Cra.V.symbol_of new_var_val in 
   {value  = new_var_val;
-   symbol = new_var_sym}
+   symbol = new_var_sym}*)
 
 let post_symbol =
   Memo.memo (fun sym ->
