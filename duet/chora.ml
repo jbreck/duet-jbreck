@@ -3,21 +3,7 @@ open Apak
 open CfgIr
 open Srk
 
-module RG = Interproc.RG
-module G = RG.G
-
-(*module K = NewtonDomain.ICRA*)  (* Unbound value K.exists *)
-(*module K = Cra.K*)
-module K = NewtonDomain.K
-module KK = NewtonDomain.KK
-
-module Ctx = NewtonDomain.Ctx
-
-module Var = Cra.V
-module VarSet = BatSet.Make(Cra.V)
-
 include Log.Make(struct let name = "chora" end)
-module A = Interproc.MakePathExpr(K)
 
 module type AuxVarModule = sig
   type val_t (* type of an auxiliary variable *)
@@ -47,73 +33,6 @@ module type ProcModule = sig
   val proc_name_triple_string : ProcMap.key -> string
   val proc_name_string : ProcMap.key -> string
 end;;
-
-module IntPair = struct
-  type t = int * int [@@deriving ord]
-  let equal (x,y) (x',y') = (x=x' && y=y')
-  let hash = Hashtbl.hash
-end
-module IntPairMap = BatMap.Make(IntPair)
-module IntPairSet = BatSet.Make(IntPair)
-
-module AuxVarModuleC = struct
-  type val_t = Cra.value
-  type val_sym = { 
-      value: Cra.value; 
-      symbol: Srk.Syntax.symbol
-  }
-  let make_aux_variable name = 
-    let new_var = Core.Var.mk (Core.Varinfo.mk_global name (Core.Concrete (Core.Int 32))) in 
-    let new_var_val = Cra.VVal new_var in 
-    (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
-    let new_var_sym = Cra.V.symbol_of new_var_val in 
-    {value  = new_var_val;
-     symbol = new_var_sym}
-  type height_model_type = 
-      (* Root to baseline of tree *)
-      | RB of val_sym 
-      (* Root to baseline, root to midline, midline to baseline *)
-      (*   where the midline is defined as the depth of the shallowest leaf *)
-      | RB_RM_MB of val_sym * val_sym * val_sym 
-
-
-  let is_var_global x = 
-    match Cra.V.of_symbol x with 
-    | Some v -> Cra.V.is_global v
-    | None -> false (* false *)
-
-  let post_symbol =
-    Memo.memo (fun sym ->
-      match Var.of_symbol sym with
-      | Some var ->
-        Srk.Syntax.mk_symbol Cra.srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
-      | None -> assert false)
-
-  type srk_ctx_magic = Cra.Ctx.t
-  let srk = Cra.srk
-  (* YYY *)
-
-end
-
-let procedure_names_map = ref IntPairMap.empty
-
-module ProcModuleC = struct
-  module ProcMap = IntPairMap
-
-  let proc_name_triple_string (entry,exit) = 
-    if ProcMap.mem (entry,exit) !procedure_names_map then 
-      let name = ProcMap.find (entry,exit) !procedure_names_map in
-      Format.sprintf "(%d,%d,\"%s\")" entry exit name
-    else
-      Format.sprintf "(%d,%d,?)" entry exit
-  
-  let proc_name_string (entry,exit) = 
-    if ProcMap.mem (entry,exit) !procedure_names_map then 
-      let name = ProcMap.find (entry,exit) !procedure_names_map in
-      Format.sprintf "%s" name
-    else
-      Format.sprintf "<unknown procedure(%d,%d)>" entry exit
-end
 
 module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   include Proc
@@ -1228,10 +1147,84 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
       end
   ;;
 
+end (* End of MakeChoraCore functor *)
 
+module RG = Interproc.RG
+module G = RG.G
 
-  (* XXX *)
+module K = NewtonDomain.K
+module KK = NewtonDomain.KK
 
+module Ctx = NewtonDomain.Ctx
+
+module Var = Cra.V
+module VarSet = BatSet.Make(Cra.V)
+
+module A = Interproc.MakePathExpr(K)
+
+module IntPair = struct
+  type t = int * int [@@deriving ord]
+  let equal (x,y) (x',y') = (x=x' && y=y')
+  let hash = Hashtbl.hash
+end
+module IntPairMap = BatMap.Make(IntPair)
+module IntPairSet = BatSet.Make(IntPair)
+
+module AuxVarModuleC = struct
+  type val_t = Cra.value
+  type val_sym = { 
+      value: Cra.value; 
+      symbol: Srk.Syntax.symbol
+  }
+  let make_aux_variable name = 
+    let new_var = Core.Var.mk (Core.Varinfo.mk_global name (Core.Concrete (Core.Int 32))) in 
+    let new_var_val = Cra.VVal new_var in 
+    (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
+    let new_var_sym = Cra.V.symbol_of new_var_val in 
+    {value  = new_var_val;
+     symbol = new_var_sym}
+  type height_model_type = 
+      (* Root to baseline of tree *)
+      | RB of val_sym 
+      (* Root to baseline, root to midline, midline to baseline *)
+      (*   where the midline is defined as the depth of the shallowest leaf *)
+      | RB_RM_MB of val_sym * val_sym * val_sym 
+
+  let is_var_global x = 
+    match Cra.V.of_symbol x with 
+    | Some v -> Cra.V.is_global v
+    | None -> false (* false *)
+
+  let post_symbol =
+    Memo.memo (fun sym ->
+      match Var.of_symbol sym with
+      | Some var ->
+        Srk.Syntax.mk_symbol Cra.srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
+      | None -> assert false)
+
+  type srk_ctx_magic = Cra.Ctx.t
+  let srk = Cra.srk
+
+end
+
+let procedure_names_map = ref IntPairMap.empty
+
+module ProcModuleC = struct
+  module ProcMap = IntPairMap
+
+  let proc_name_triple_string (entry,exit) = 
+    if ProcMap.mem (entry,exit) !procedure_names_map then 
+      let name = ProcMap.find (entry,exit) !procedure_names_map in
+      Format.sprintf "(%d,%d,\"%s\")" entry exit name
+    else
+      Format.sprintf "(%d,%d,?)" entry exit
+  
+  let proc_name_string (entry,exit) = 
+    if ProcMap.mem (entry,exit) !procedure_names_map then 
+      let name = ProcMap.find (entry,exit) !procedure_names_map in
+      Format.sprintf "%s" name
+    else
+      Format.sprintf "<unknown procedure(%d,%d)>" entry exit
 end
 
 module ChoraC = MakeChoraCore(ProcModuleC)(AuxVarModuleC)
