@@ -957,40 +957,40 @@ let post_symbol =
   Memo.memo (fun sym ->
     match Var.of_symbol sym with
     | Some var ->
-      Srk.Syntax.mk_symbol Cra.srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
+      Srk.Syntax.mk_symbol srk ~name:(Var.show var ^ "'") (Var.typ var :> Srk.Syntax.typ)
     | None -> assert false)
 
 let upper_symbol =
   Memo.memo (fun sym ->
-   Srk.Syntax.mk_symbol Cra.srk 
-     ~name:("Rm_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
-     (Srk.Syntax.typ_symbol Cra.srk sym))
+   Srk.Syntax.mk_symbol srk 
+     ~name:("Rm_"^(Srk.Syntax.show_symbol srk sym)) 
+     (Srk.Syntax.typ_symbol srk sym))
 
 let lower_symbol =
   Memo.memo (fun sym ->
-   Srk.Syntax.mk_symbol Cra.srk 
-     ~name:("Mb_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
-     (Srk.Syntax.typ_symbol Cra.srk sym))
+   Srk.Syntax.mk_symbol srk 
+     ~name:("Mb_"^(Srk.Syntax.show_symbol srk sym)) 
+     (Srk.Syntax.typ_symbol srk sym))
 
 let rb_symbol =
   Memo.memo (fun sym ->
-   Srk.Syntax.mk_symbol Cra.srk 
-     ~name:("Rb_"^(Srk.Syntax.show_symbol Cra.srk sym)) 
-     (Srk.Syntax.typ_symbol Cra.srk sym))
+   Srk.Syntax.mk_symbol srk 
+     ~name:("Rb_"^(Srk.Syntax.show_symbol srk sym)) 
+     (Srk.Syntax.typ_symbol srk sym))
 
 let to_transition_formula tr =
   let (tr_symbols, post_def) =
     BatEnum.fold (fun (symbols, post_def) (var, term) ->
         let pre_sym = Var.symbol_of var in
         let post_sym = post_symbol pre_sym in
-        let post_term = Srk.Syntax.mk_const Cra.srk post_sym in
+        let post_term = Srk.Syntax.mk_const srk post_sym in
         ((pre_sym,post_sym)::symbols,
-          (Srk.Syntax.mk_eq Cra.srk post_term term)::post_def))
+          (Srk.Syntax.mk_eq srk post_term term)::post_def))
       ([], [])
       (K.transform tr)
   in
   let body =
-    SrkSimplify.simplify_terms Cra.srk (Srk.Syntax.mk_and Cra.srk ((K.guard tr)::post_def))
+    SrkSimplify.simplify_terms srk (Srk.Syntax.mk_and srk ((K.guard tr)::post_def))
   in
   (tr_symbols, body)
 
@@ -1008,11 +1008,11 @@ let to_transition_formula_with_unmodified tr all_vars =
   in
   let unmodified_symbols = 
     Srk.Syntax.Symbol.Set.diff all_symbols tr_symbol_set in
-  let unmodified_inclusive_body = Srk.Syntax.mk_and Cra.srk
+  let unmodified_inclusive_body = Srk.Syntax.mk_and srk
     (body::(List.map 
-      (fun sym -> Srk.Syntax.mk_eq Cra.srk
-        (Srk.Syntax.mk_const Cra.srk sym)
-        (Srk.Syntax.mk_const Cra.srk (post_symbol sym)))
+      (fun sym -> Srk.Syntax.mk_eq srk
+        (Srk.Syntax.mk_const srk sym)
+        (Srk.Syntax.mk_const srk (post_symbol sym)))
       (Srk.Syntax.Symbol.Set.elements unmodified_symbols))) in
   let inclusive_symbols = 
     Srk.Syntax.Symbol.Set.fold 
@@ -1025,7 +1025,7 @@ let of_transition_formula tr_symbols fmla =
     let transform =
       List.fold_left (fun tr (pre, post) ->
           match Var.of_symbol pre with
-          | Some v -> (v, Srk.Syntax.mk_const Cra.srk post)::tr
+          | Some v -> (v, Srk.Syntax.mk_const srk post)::tr
           | None -> assert false)
         []
         tr_symbols
@@ -1043,7 +1043,7 @@ let debug_print_depth_wedge tr =
     | None -> false (* false *)
   in 
   logf ~level:`always "  %t" 
-    (fun f -> Wedge.pp f (Wedge.abstract ~exists:projection Cra.srk body))
+    (fun f -> Wedge.pp f (Wedge.abstract ~exists:projection srk body))
 
 let debug_print_wedge_of_transition ?(levelParam=None) tr = 
   let level = match levelParam with 
@@ -1059,7 +1059,7 @@ let debug_print_wedge_of_transition ?(levelParam=None) tr =
     | None -> false (* false *)
   in 
   logf ~level:level "  %t@." 
-    (fun f -> Wedge.pp f (Wedge.abstract ~exists:projection Cra.srk body))
+    (fun f -> Wedge.pp f (Wedge.abstract ~exists:projection srk body))
 
 type 'a bound_info = {
   bound_pairs : (Srk.Syntax.symbol * 'a Srk.Syntax.term) list;
@@ -1070,27 +1070,27 @@ type 'a bound_info = {
 }
 
 let assign_value_to_literal value literal = 
-  K.assign value (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal))
+  K.assign value (Srk.Syntax.mk_real srk (Srk.QQ.of_int literal))
 
 (*let assume_value_eq_literal value literal = 
   let var = Cra.V.symbol_of value in 
-  K.assume (Srk.Syntax.mk_eq Cra.srk 
-    (Srk.Syntax.mk_const Cra.srk var)
-    (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal)))*)
+  K.assume (Srk.Syntax.mk_eq srk 
+    (Srk.Syntax.mk_const srk var)
+    (Srk.Syntax.mk_real srk (Srk.QQ.of_int literal)))*)
 
 let assume_literal_leq_value literal value = 
   let var = Cra.V.symbol_of value in 
-  K.assume (Srk.Syntax.mk_leq Cra.srk 
-    (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int literal))
-    (Srk.Syntax.mk_const Cra.srk var))
+  K.assume (Srk.Syntax.mk_leq srk 
+    (Srk.Syntax.mk_real srk (Srk.QQ.of_int literal))
+    (Srk.Syntax.mk_const srk var))
 
 let increment_variable value = 
   K.assign
     value 
     (Srk.Syntax.mk_add 
-      Cra.srk
-      [(Srk.Syntax.mk_const Cra.srk (Cra.V.symbol_of value));
-       (Srk.Syntax.mk_real Cra.srk (Srk.QQ.of_int 1))])
+      srk
+      [(Srk.Syntax.mk_const srk (Cra.V.symbol_of value));
+       (Srk.Syntax.mk_real srk (Srk.QQ.of_int 1))])
 
 (*let make_call_abstraction base_case_weight scc_global_footprint = 
   let (tr_symbols, body) = 
@@ -1099,7 +1099,7 @@ let make_call_abstraction base_case_fmla tr_symbols =
   let param_prime = Str.regexp "param[0-9]+'" in
   let projection x = 
     (
-    let symbol_name = Srk.Syntax.show_symbol Cra.srk x in 
+    let symbol_name = Srk.Syntax.show_symbol srk x in 
     let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
     if this_name_is_a_param_prime then 
         ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
@@ -1112,7 +1112,7 @@ let make_call_abstraction base_case_fmla tr_symbols =
       | None -> false (* false *)
     ))
   in 
-  let wedge = Wedge.abstract ~exists:projection Cra.srk base_case_fmla in 
+  let wedge = Wedge.abstract ~exists:projection srk base_case_fmla in 
   logf ~level:`info "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
   let cs = Wedge.coordinate_system wedge in 
   let bounding_atoms = ref [] in
@@ -1122,17 +1122,17 @@ let make_call_abstraction base_case_fmla tr_symbols =
     if CoordinateSystem.type_of_vec cs vec = `TyInt then
     begin
       let term = CoordinateSystem.term_of_vec cs vec in 
-      (*logf ~level:`info "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp Cra.srk) term;*)
+      (*logf ~level:`info "  base-case-bounded term: %a \n" (Srk.Syntax.Term.pp srk) term;*)
       (* *)
       (* Hacky Optional Behavior: Ignore CRA's auto-generated array-position and array-width variables *)
-      let name = Srk.Syntax.Term.show Cra.srk term in
+      let name = Srk.Syntax.Term.show srk term in
       match String.index_opt name '@' with | Some i -> () | None ->
       begin
         let bounding_var_sym_pair = make_aux_variable "B_in" in
         (*let bounding_var = Core.Var.mk (Core.Varinfo.mk_global "B_in" (Core.Concrete (Core.Int 32))) in 
           let bounding_var_sym = Cra.V.symbol_of (Cra.VVal bounding_var) in  *)
-        let bounding_term = Srk.Syntax.mk_const Cra.srk bounding_var_sym_pair.symbol in 
-        let bounding_atom = Srk.Syntax.mk_leq Cra.srk term bounding_term in 
+        let bounding_term = Srk.Syntax.mk_const srk bounding_var_sym_pair.symbol in 
+        let bounding_atom = Srk.Syntax.mk_leq srk term bounding_term in 
         bounding_atoms := bounding_atom            :: (!bounding_atoms);
         bound_list     := (bounding_var_sym_pair.symbol, term) :: (!bound_list) 
       end
@@ -1151,7 +1151,7 @@ let make_call_abstraction base_case_fmla tr_symbols =
     let rec_flag_val = Cra.VVal rec_flag_var in 
     let _ = Cra.V.symbol_of rec_flag_val in (* Add to symbol table... (HACK!) *)
   let set_rec_flag = assign_value_to_literal rec_flag_var_sym_pair.value 1 in *)
-  let call_abstraction_fmla = Srk.Syntax.mk_and Cra.srk (!bounding_atoms) in 
+  let call_abstraction_fmla = Srk.Syntax.mk_and srk (!bounding_atoms) in 
   (*let call_abstraction_weight = of_transition_formula tr_symbols call_abstraction_fmla in*)
     {bound_pairs = !bound_list;
      (*recursion_flag = rec_flag_var_sym_pair.value;*)
@@ -1180,7 +1180,7 @@ type recurrence_candidate = {
 }
 
 let accept_candidate candidate recurrences = 
-  BatDynArray.add recurrences.term_of_id (Srk.Syntax.mk_const Cra.srk candidate.inner_sym);
+  BatDynArray.add recurrences.term_of_id (Srk.Syntax.mk_const srk candidate.inner_sym);
   let new_num = recurrences.n_recs_accepted in 
   logf ~level:`trace "   Accepted candidate recurrence: inner_sym=%d rec_num=%d" (Srk.Syntax.int_of_symbol candidate.inner_sym) new_num;
   {done_symbols = 
@@ -1190,7 +1190,7 @@ let accept_candidate candidate recurrences =
    ineq_tr = (candidate.inner_sym, candidate.outer_sym)::recurrences.ineq_tr;
    blk_transforms = recurrences.blk_transforms;
    blk_adds = recurrences.blk_adds;
-   (*rev_term_of_id = (Srk.Syntax.mk_const Cra.srk candidate.inner_sym)::recurrences.rev_term_of_id;*)
+   (*rev_term_of_id = (Srk.Syntax.mk_const srk candidate.inner_sym)::recurrences.rev_term_of_id;*)
    term_of_id = recurrences.term_of_id;
    n_recs_accepted = recurrences.n_recs_accepted + 1;
    n_recs_specified = recurrences.n_recs_specified}
@@ -1327,9 +1327,9 @@ let is_an_inner_symbol sym b_in_b_out_map =
 let rename_b_in_to_zero b_in_b_out_map solution = 
   let subst_b_in_with_zeros sym = 
     if is_an_inner_symbol sym b_in_b_out_map
-    then Srk.Syntax.mk_real Cra.srk QQ.zero 
-    else Srk.Syntax.mk_const Cra.srk sym in 
-  Srk.Syntax.substitute_const Cra.srk subst_b_in_with_zeros solution 
+    then Srk.Syntax.mk_real srk QQ.zero 
+    else Srk.Syntax.mk_const srk sym in 
+  Srk.Syntax.substitute_const srk subst_b_in_with_zeros solution 
 
 (* Build a procedure summary for one procedure.
  *
@@ -1356,15 +1356,15 @@ let build_height_based_summary
   let bounding_conjunction = 
     let make_bounding_conjuncts (in_sym,term) =
       let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
-      Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym)
+      Srk.Syntax.mk_leq srk term (Srk.Syntax.mk_const srk out_sym)
     in
     let bounding_conjuncts = 
       List.map make_bounding_conjuncts bounds.bound_pairs in 
-    Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
+    Srk.Syntax.mk_and srk bounding_conjuncts in 
   log_fmla_proc "@.    bddg conj%s: %a" proc_key bounding_conjunction; 
   (* top_down formula /\ (solution with b_in = 0) /\ each term <= each b_out *)
   let height_based_summary_fmla = 
-    Srk.Syntax.mk_and Cra.srk [top_down_formula; 
+    Srk.Syntax.mk_and srk [top_down_formula; 
                                solution_starting_at_zero;
                                bounding_conjunction] in
   log_fmla_proc "@.    HBA_summary_fmla%s: %a" proc_key height_based_summary_fmla; 
@@ -1386,30 +1386,30 @@ let build_height_based_summary
 let substitute_one_sym formula old_sym new_sym =  
   let subst_rule sym = 
     if sym == old_sym 
-    then Srk.Syntax.mk_const Cra.srk new_sym  
-    else Srk.Syntax.mk_const Cra.srk sym in
-  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+    then Srk.Syntax.mk_const srk new_sym  
+    else Srk.Syntax.mk_const srk sym in
+  Srk.Syntax.substitute_const srk subst_rule formula
 
 let lower_some_symbols formula excepting = 
   let subst_rule sym = 
     if Srk.Syntax.Symbol.Set.mem sym excepting 
-    then Srk.Syntax.mk_const Cra.srk sym
-    else Srk.Syntax.mk_const Cra.srk (lower_symbol sym) in 
-  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+    then Srk.Syntax.mk_const srk sym
+    else Srk.Syntax.mk_const srk (lower_symbol sym) in 
+  Srk.Syntax.substitute_const srk subst_rule formula
 
 let upper_some_symbols formula excepting = 
   let subst_rule sym = 
     if Srk.Syntax.Symbol.Set.mem sym excepting 
-    then Srk.Syntax.mk_const Cra.srk sym
-    else Srk.Syntax.mk_const Cra.srk (upper_symbol sym) in 
-  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+    then Srk.Syntax.mk_const srk sym
+    else Srk.Syntax.mk_const srk (upper_symbol sym) in 
+  Srk.Syntax.substitute_const srk subst_rule formula
 
 let rb_some_symbols formula excepting = 
   let subst_rule sym = 
     if Srk.Syntax.Symbol.Set.mem sym excepting 
-    then Srk.Syntax.mk_const Cra.srk sym
-    else Srk.Syntax.mk_const Cra.srk (rb_symbol sym) in 
-  Srk.Syntax.substitute_const Cra.srk subst_rule formula
+    then Srk.Syntax.mk_const srk sym
+    else Srk.Syntax.mk_const srk (rb_symbol sym) in 
+  Srk.Syntax.substitute_const srk subst_rule formula
 
 (* In this function, we build up a bunch of formulas F1...F8 and then
      we conjoin them.  To ensure that the different conjuncts are "wired
@@ -1428,14 +1428,14 @@ let build_dual_height_summary
   let rm_topdown = upper_some_symbols rm_topdown excepting in
   log_fmla_proc "@.    rm_tdf%s: %a" proc_key rm_topdown;
   (* F3: height equation: rb = rm + mb*)
-  let rb_const = Srk.Syntax.mk_const Cra.srk (post_symbol rb.symbol) in 
-  let rm_const = Srk.Syntax.mk_const Cra.srk (post_symbol rm.symbol) in 
-  let mb_const = Srk.Syntax.mk_const Cra.srk (post_symbol mb.symbol) in 
-  let height_eq = Srk.Syntax.mk_eq Cra.srk rb_const
-    (Srk.Syntax.mk_add Cra.srk [rm_const; mb_const]) in
+  let rb_const = Srk.Syntax.mk_const srk (post_symbol rb.symbol) in 
+  let rm_const = Srk.Syntax.mk_const srk (post_symbol rm.symbol) in 
+  let mb_const = Srk.Syntax.mk_const srk (post_symbol mb.symbol) in 
+  let height_eq = Srk.Syntax.mk_eq srk rb_const
+    (Srk.Syntax.mk_add srk [rm_const; mb_const]) in
   log_fmla_proc "@.    ht_eq%s: %a" proc_key height_eq;
   (* F3: height inequation: rm <= rb *)
-  let height_ineq = Srk.Syntax.mk_leq Cra.srk rm_const rb_const in
+  let height_ineq = Srk.Syntax.mk_leq srk rm_const rb_const in
   log_fmla_proc "@.    ht_ineq%s: %a" proc_key height_ineq;
   (* F5: mb solution relating mb, b_in_low, b_out_low, with b_in_low = 0 *)
   let original_mb_solution = mb_solution in 
@@ -1449,22 +1449,22 @@ let build_dual_height_summary
   let bound_upper = 
     let make_bounding_conjuncts (in_sym,term) =
       let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
-      Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym) in
+      Srk.Syntax.mk_leq srk term (Srk.Syntax.mk_const srk out_sym) in
     let bounding_conjuncts = 
       List.map make_bounding_conjuncts bounds.bound_pairs in 
-    Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
+    Srk.Syntax.mk_and srk bounding_conjuncts in 
   let bound_upper = upper_some_symbols bound_upper excepting in 
   log_fmla_proc "@.    bd_up conj%s: %a" proc_key bound_upper;
   (* F8: bound_bridge: 0 <= b_in_up /\ b_in_up <= b_out_low *)
   let bound_bridge = 
     let make_bridging_conjuncts in_sym =
       let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in
-      let up_in_const = Srk.Syntax.mk_const Cra.srk (upper_symbol in_sym) in 
-      let low_out_const = Srk.Syntax.mk_const Cra.srk (lower_symbol out_sym) in
-      let zero = Srk.Syntax.mk_real Cra.srk QQ.zero in
-      Srk.Syntax.mk_and Cra.srk
-        [Srk.Syntax.mk_leq Cra.srk zero up_in_const;
-         Srk.Syntax.mk_leq Cra.srk up_in_const low_out_const] in
+      let up_in_const = Srk.Syntax.mk_const srk (upper_symbol in_sym) in 
+      let low_out_const = Srk.Syntax.mk_const srk (lower_symbol out_sym) in
+      let zero = Srk.Syntax.mk_real srk QQ.zero in
+      Srk.Syntax.mk_and srk
+        [Srk.Syntax.mk_leq srk zero up_in_const;
+         Srk.Syntax.mk_leq srk up_in_const low_out_const] in
     let scc_b_in_symbols = 
       Srk.Syntax.Symbol.Map.fold
         (fun in_sym _ rest -> in_sym::rest)
@@ -1472,7 +1472,7 @@ let build_dual_height_summary
         [] in 
     let bridging_conjuncts = 
       List.map make_bridging_conjuncts scc_b_in_symbols in 
-    Srk.Syntax.mk_and Cra.srk bridging_conjuncts in 
+    Srk.Syntax.mk_and srk bridging_conjuncts in 
   log_fmla_proc "@.    bd_bridge conj%s: %a" proc_key bound_bridge;
   let first_part = [rb_topdown;rm_topdown;height_eq;height_ineq] in
   let last_part = [mb_solution;bound_bridge;rm_solution;bound_upper] in
@@ -1482,10 +1482,10 @@ let build_dual_height_summary
     let bound_rb = 
       let make_bounding_conjuncts (in_sym,term) =
         let out_sym = Srk.Syntax.Symbol.Map.find in_sym b_in_b_out_map in 
-        Srk.Syntax.mk_leq Cra.srk term (Srk.Syntax.mk_const Cra.srk out_sym) in
+        Srk.Syntax.mk_leq srk term (Srk.Syntax.mk_const srk out_sym) in
       let bounding_conjuncts = 
         List.map make_bounding_conjuncts bounds.bound_pairs in 
-      Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
+      Srk.Syntax.mk_and srk bounding_conjuncts in 
     let bound_rb = rb_some_symbols bound_rb excepting in 
     log_fmla_proc "@.    bd_rb conj%s: %a" proc_key bound_rb;
     (* F10(optional) rb solution relating rb, b_in_rb, b_out_rb with b_in_rb=0 *)
@@ -1498,7 +1498,7 @@ let build_dual_height_summary
   end else [] in 
   (* ==============  End of Fallback section   ============== *)
   (* big_conjunction *)
-  let dual_height_summary_fmla = Srk.Syntax.mk_and Cra.srk 
+  let dual_height_summary_fmla = Srk.Syntax.mk_and srk 
     (first_part @ fallback @ last_part) in
   log_fmla_proc "@.    DHA conj%s: %a" proc_key dual_height_summary_fmla; 
   dual_height_summary_fmla
@@ -1521,11 +1521,11 @@ let sanity_check_recurrences recurrences term_of_id =
            (List.length recurrences.blk_adds)) then
      failwith "Matrix recurrence transform/add blocks mismatched.");
   let print_expr i term = 
-      logf ~level:`trace "  term_of_id[%d]=%a" i (Srk.Syntax.Expr.pp Cra.srk) term in
+      logf ~level:`trace "  term_of_id[%d]=%a" i (Srk.Syntax.Expr.pp srk) term in
   (*let pp_dim f i = 
-      Format.asprintf "%a" (Srk.Syntax.Expr.pp Cra.srk) (term_of_id.(i)) in*)
+      Format.asprintf "%a" (Srk.Syntax.Expr.pp srk) (term_of_id.(i)) in*)
   let pp_dim f i = 
-      Format.fprintf f "%a" (Srk.Syntax.Expr.pp Cra.srk) (term_of_id.(i)) in
+      Format.fprintf f "%a" (Srk.Syntax.Expr.pp srk) (term_of_id.(i)) in
   Array.iteri print_expr term_of_id;
   let print_blocks b trb = 
       let ab = List.nth recurrences.blk_adds ((List.length recurrences.blk_adds) - b - 1) in
@@ -1658,7 +1658,7 @@ let extract_recurrence_for_symbol
     target_inner_sym b_in_b_out_map wedge_map recurrences 
     recurrence_candidates allow_interdependence allow_decrease = 
   (*logf ~level:`info "  Attempting extraction for %t DELETEME.@." 
-    (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_inner_sym);*)
+    (fun f -> Srk.Syntax.pp_symbol srk f target_inner_sym);*)
   (* First, check whether we've already extracted a recurrence for this symbol *)
   if have_recurrence target_inner_sym recurrences then () else 
   if not (Srk.Syntax.Symbol.Map.mem target_inner_sym b_in_b_out_map) then () else 
@@ -1669,8 +1669,8 @@ let extract_recurrence_for_symbol
    *         that I'm interested, rather than going in this direction, starting from the 
    *         symbols that I know about.  *)
   let sub_cs = Wedge.coordinate_system sub_wedge in
-  if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_inner_sym)) then () else
-  if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const Cra.srk target_outer_sym)) then () else
+  if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const srk target_inner_sym)) then () else
+  if not (CoordinateSystem.admits sub_cs (Srk.Syntax.mk_const srk target_outer_sym)) then () else
   begin
   (*let target_inner_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_inner_sym, [])) in*)
   let target_outer_dim = CoordinateSystem.cs_term_id sub_cs (`App (target_outer_sym, [])) in 
@@ -1809,7 +1809,7 @@ let extract_recurrence_for_symbol
       (* We've identified a recurrence; now we'll put together the data 
         structures we'll need to solve it.  *)
       (let lev = if !chora_debug_recs then `always else `info in
-      logf ~level:lev "  [PRE-REC] %a" (Srk.Syntax.Term.pp Cra.srk) term);
+      logf ~level:lev "  [PRE-REC] %a" (Srk.Syntax.Term.pp srk) term);
       logf ~level:`trace "    before filter: %a" Linear.QQVector.pp vec;
       let one_over_outer_coeff = QQ.inverse positive_outer_coeff in
       let new_vec = Linear.QQVector.scalar_mul one_over_outer_coeff new_vec in 
@@ -1842,23 +1842,23 @@ let extract_recurrence_for_symbol
 let make_outer_bounding_symbol
     (local_b_out_definitions, b_in_b_out_map, b_out_symbols) 
     (inner_sym, term) =
-  let outer_sym = Srk.Syntax.mk_symbol Cra.srk ~name:"B_out" `TyInt in
-  let lhs = Srk.Syntax.mk_const Cra.srk outer_sym in 
+  let outer_sym = Srk.Syntax.mk_symbol srk ~name:"B_out" `TyInt in
+  let lhs = Srk.Syntax.mk_const srk outer_sym in 
   let rhs = term in 
   let b_out_constraint = 
     (* Drop any b_outs associated with terms that we don't know to be ints *)
-    if Srk.Syntax.term_typ Cra.srk term = `TyInt then
+    if Srk.Syntax.term_typ srk term = `TyInt then
       ((let lev = if !chora_debug_recs then `always else `info in
         logf ~level:lev "  [TERM]: %a  @@{h}:  %t  @@{h+1}:  %t " 
-        (Srk.Syntax.Term.pp Cra.srk) term
-        (fun f -> Srk.Syntax.pp_symbol Cra.srk f inner_sym)
-        (fun f -> Srk.Syntax.pp_symbol Cra.srk f outer_sym));
+        (Srk.Syntax.Term.pp srk) term
+        (fun f -> Srk.Syntax.pp_symbol srk f inner_sym)
+        (fun f -> Srk.Syntax.pp_symbol srk f outer_sym));
         (* B_out <= term *)
-        Srk.Syntax.mk_leq Cra.srk lhs rhs)
+        Srk.Syntax.mk_leq srk lhs rhs)
     else (let lev = if !chora_debug_recs then `always else `info in 
         logf ~level:lev "  Note: dropped a real term ";
         (* B_out = ? *)
-        Srk.Syntax.mk_true Cra.srk) in
+        Srk.Syntax.mk_true srk) in
   (*local_b_out_definitions := b_out_constraint :: (!local_b_out_definitions);
   b_in_b_out_map := Srk.Syntax.Symbol.Map.add inner_sym outer_sym !b_in_b_out_map;
   b_out_symbols := Srk.Syntax.Symbol.Set.add outer_sym (!b_out_symbols) in*)
@@ -1912,21 +1912,21 @@ let make_extraction_formula
     then []
     else begin
          let non_negative_b_in (inner_sym, _) = 
-         let lhs = Srk.Syntax.mk_real Cra.srk QQ.zero in 
-         let rhs = Srk.Syntax.mk_const Cra.srk inner_sym in 
-         Srk.Syntax.mk_leq Cra.srk lhs rhs in
+         let lhs = Srk.Syntax.mk_real srk QQ.zero in 
+         let rhs = Srk.Syntax.mk_const srk inner_sym in 
+         Srk.Syntax.mk_leq srk lhs rhs in
          (* *)
          let all_b_in_non_negative = 
            List.map non_negative_b_in bounds.bound_pairs in 
-         [Srk.Syntax.mk_and Cra.srk all_b_in_non_negative] 
+         [Srk.Syntax.mk_and srk all_b_in_non_negative] 
     end in 
   (* ---------------------------------------------------------- *)
   (* *)
-  let b_out_conjunction = Srk.Syntax.mk_and Cra.srk local_b_out_definitions in 
-  (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) b_out_conjunction;*)
+  let b_out_conjunction = Srk.Syntax.mk_and srk local_b_out_definitions in 
+  (*logf ~level:`info "  b_out_conjunction: \n%a \n" (Srk.Syntax.Formula.pp srk) b_out_conjunction;*)
   let conjuncts = b_in_conjunction @ [rec_fmla; b_out_conjunction] in
-  let extraction_formula = Srk.Syntax.mk_and Cra.srk conjuncts in 
-  logf ~level:`trace "  extraction_formula: \n%a \n" (Srk.Syntax.Formula.pp Cra.srk) extraction_formula;
+  let extraction_formula = Srk.Syntax.mk_and srk conjuncts in 
+  logf ~level:`trace "  extraction_formula: \n%a \n" (Srk.Syntax.Formula.pp srk) extraction_formula;
   extraction_formula (* formerly had a tuple of return values *)
 
 (* Option 1 *)
@@ -1939,7 +1939,7 @@ let make_extraction_wedges_from_one_wedge
   let projection sym = 
     is_an_inner_symbol sym b_in_b_out_map || 
     Srk.Syntax.Symbol.Set.mem sym b_out_symbols in 
-  let wedge = Wedge.abstract ~exists:projection ~subterm:projection Cra.srk extraction_formula in 
+  let wedge = Wedge.abstract ~exists:projection ~subterm:projection srk extraction_formula in 
   (* Wedge.strengthen wedge; (* NOTE: Added just for debugging... *) *)
   logf ~level:`info "  extraction_wedge = @.%t@." (fun f -> Wedge.pp f wedge); 
   (* For each outer bounding symbol (B_out), project the wedge down to that outer
@@ -1953,7 +1953,7 @@ let make_extraction_wedges_from_one_wedge
     (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
     let sub_wedge = Wedge.exists ~subterm:targeted_projection targeted_projection wedge in 
     (logf ~level:`trace "  sub_wedge_for[%t] = @.%t@." 
-      (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_outer_sym)
+      (fun f -> Srk.Syntax.pp_symbol srk f target_outer_sym)
       (fun f -> Wedge.pp f sub_wedge);
     Srk.Syntax.Symbol.Map.add target_inner_sym sub_wedge map) in 
   let updated_wedge_map = 
@@ -1982,10 +1982,10 @@ let make_extraction_wedges_from_formula
       is_an_inner_symbol sym b_in_b_out_map in 
     (* Project this wedge down to a sub_wedge that uses only this B_out and some B_ins *)
     let sub_wedge = Wedge.abstract ~exists:targeted_projection ~subterm:targeted_projection 
-                      Cra.srk extraction_formula in 
+                      srk extraction_formula in 
     (*Wedge.strengthen sub_wedge; (* NOTE: Added just for debugging... *) *)
     (logf ~level:`trace "  sub_wedge_for[%t] = @.%t@." 
-      (fun f -> Srk.Syntax.pp_symbol Cra.srk f target_outer_sym)
+      (fun f -> Srk.Syntax.pp_symbol srk f target_outer_sym)
       (fun f -> Wedge.pp f sub_wedge);
     Srk.Syntax.Symbol.Map.add target_inner_sym sub_wedge map) in 
   let updated_wedge_map = 
@@ -2043,14 +2043,14 @@ let extract_and_solve_recurrences
   (* TODO: Change my interface to use pairs of transform_add blocks *)
   (* Send the matrix recurrence to OCRS and obtain a solution *)
   logf ~level:`trace "@.    Sending to OCRS ";
-  let loop_counter = Srk.Syntax.mk_const Cra.srk post_height_sym in
+  let loop_counter = Srk.Syntax.mk_const srk post_height_sym in
   let nb_constants = 0 in
   let solution = SolvablePolynomial.exp_ocrs_external 
-                  Cra.srk recurrences.ineq_tr loop_counter term_of_id 
+                  srk recurrences.ineq_tr loop_counter term_of_id 
                   nb_constants recurrences.blk_transforms 
                   recurrences.blk_adds in 
   logf ~level:`info "@.    solution: %a" 
-      (Srk.Syntax.Formula.pp Cra.srk) solution;
+      (Srk.Syntax.Formula.pp srk) solution;
   (* *)
   solution
 
@@ -2163,13 +2163,13 @@ let top_down_formula_to_wedge top_down_formula sym =
     | Some v -> Core.Var.is_global (Cra.var_of_value v)
     | None -> false
   in
-  let wedge = Wedge.abstract ~exists:projection Cra.srk top_down_formula in
+  let wedge = Wedge.abstract ~exists:projection srk top_down_formula in
   let level = if !chora_debug_squeeze then `always else `info in
   logf ~level " incorporating squeezed depth formula: %t" 
     (fun f -> Wedge.pp f wedge);
   Wedge.to_formula wedge
   (*let wedge_as_formula = Wedge.to_formula wedge in 
-  Srk.Syntax.mk_and Cra.srk [top_down_formula; wedge_as_formula]*)
+  Srk.Syntax.mk_and srk [top_down_formula; wedge_as_formula]*)
 
 let top_down_formula_to_symbolic_bounds phi sym = 
   let level = if !chora_debug_squeeze then `always else `info in
@@ -2181,10 +2181,10 @@ let top_down_formula_to_symbolic_bounds phi sym =
     | None -> false
     (*true*)
   in
-  let symbol_term = Syntax.mk_const Cra.srk sym in
+  let symbol_term = Syntax.mk_const srk sym in
   let debug_list part = 
      logf ~level "      -- inner bound list [";
-     List.iter (fun elt -> logf ~level "       %a" (Syntax.Term.pp Cra.srk) elt) part;
+     List.iter (fun elt -> logf ~level "       %a" (Syntax.Term.pp srk) elt) part;
      logf ~level "      -- inner bound list ]"
   in
   let debug_list_list parts = 
@@ -2194,12 +2194,12 @@ let top_down_formula_to_symbolic_bounds phi sym =
   in
   let safer_disjoin parts = 
     match parts with 
-    | [] -> Syntax.mk_true Cra.srk
-    | _ -> Syntax.mk_or Cra.srk parts
+    | [] -> Syntax.mk_true srk
+    | _ -> Syntax.mk_or srk parts
   in
   let to_formula parts = 
     let (lower,upper) = parts in
-    (*| None -> Syntax.mk_false Cra.srk
+    (*| None -> Syntax.mk_false srk
       | Some (lower, upper) ->*)
     logf ~level " lower bounds: ";
     debug_list_list lower;
@@ -2208,59 +2208,59 @@ let top_down_formula_to_symbolic_bounds phi sym =
     let lower_bounds =
       lower
       |> List.map (fun case ->
-          case |> List.map (fun lower_bound -> Syntax.mk_leq Cra.srk lower_bound symbol_term)
-          |> Syntax.mk_and Cra.srk)
+          case |> List.map (fun lower_bound -> Syntax.mk_leq srk lower_bound symbol_term)
+          |> Syntax.mk_and srk)
       |> safer_disjoin
     in
     let upper_bounds =
       upper
       |> List.map (fun case ->
-          case |> List.map (fun upper_bound -> Syntax.mk_leq Cra.srk symbol_term upper_bound)
-          |> Syntax.mk_and Cra.srk)
+          case |> List.map (fun upper_bound -> Syntax.mk_leq srk symbol_term upper_bound)
+          |> Syntax.mk_and srk)
       |> safer_disjoin
     in
-    Syntax.mk_and Cra.srk [lower_bounds; upper_bounds]
+    Syntax.mk_and srk [lower_bounds; upper_bounds]
   in
-  logf ~level " sbf-squeeze input: %a " (Syntax.Formula.pp Cra.srk) phi;
+  logf ~level " sbf-squeeze input: %a " (Syntax.Formula.pp srk) phi;
   let formula_parts_wrapped = 
-      Wedge.symbolic_bounds_formula_list ~exists Cra.srk phi sym in
+      Wedge.symbolic_bounds_formula_list ~exists srk phi sym in
   match formula_parts_wrapped with
   | `Sat (formula_parts) -> 
       let formula = to_formula formula_parts in 
-      logf ~level " sbf-squeeze output: %a " (Syntax.Formula.pp Cra.srk) formula;
+      logf ~level " sbf-squeeze output: %a " (Syntax.Formula.pp srk) formula;
       formula
   | `Unsat ->
       logf ~level:`always " WARNING: sbf-squeeze got unsatisfiable depth formula!";
-      Syntax.mk_true Cra.srk
+      Syntax.mk_true srk
 
   (* OLD CODE *)
   (*
-  match Wedge.symbolic_bounds_formula ~exists Cra.srk phi sym with
+  match Wedge.symbolic_bounds_formula ~exists srk phi sym with
   | `Sat (lower, upper) ->
     let lower_bound_formula = 
       begin match lower with
         | Some lower ->
-          logf ~level " squeeze: %a <= height" (Syntax.pp_expr_unnumbered Cra.srk) lower;
-          Syntax.mk_leq Cra.srk lower (Syntax.mk_const Cra.srk sym)
+          logf ~level " squeeze: %a <= height" (Syntax.pp_expr_unnumbered srk) lower;
+          Syntax.mk_leq srk lower (Syntax.mk_const srk sym)
         | None -> 
           logf ~level " squeeze: no lower bound on height";
-          Syntax.mk_true Cra.srk
+          Syntax.mk_true srk
       end
     in
     let upper_bound_formula =
       begin match upper with
         | Some upper ->
-          logf ~level " squeeze: height <= %a" (Syntax.pp_expr_unnumbered Cra.srk) upper;
-          Syntax.mk_leq Cra.srk (Syntax.mk_const Cra.srk sym) upper
+          logf ~level " squeeze: height <= %a" (Syntax.pp_expr_unnumbered srk) upper;
+          Syntax.mk_leq srk (Syntax.mk_const srk sym) upper
         | None ->
           logf ~level " squeeze: no upper bound on height";
-          Syntax.mk_true Cra.srk
+          Syntax.mk_true srk
       end
     in
-    Syntax.mk_and Cra.srk [lower_bound_formula; upper_bound_formula]
+    Syntax.mk_and srk [lower_bound_formula; upper_bound_formula]
   | `Unsat ->
     logf ~level:`always " squeeze: phi_td is infeasible";
-    Syntax.mk_true Cra.srk
+    Syntax.mk_true srk
   *)
  
 let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t) 
@@ -2322,14 +2322,14 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
         end);*)
         let _, top_down_formula = to_transition_formula td_summary in
         logf ~level:`info "@.  tdf%s: %a" (proc_name_triple_string (p_entry,p_exit))
-            (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
+            (Srk.Syntax.Formula.pp srk) top_down_formula;
         let post_height_sym = post_symbol height.symbol in
-        let post_height_gt_zero = Syntax.mk_lt Cra.srk 
-          (Syntax.mk_zero Cra.srk)
-          (Syntax.mk_const Cra.srk post_height_sym) in
-        let post_height_eq_zero = Syntax.mk_eq Cra.srk 
-          (Syntax.mk_zero Cra.srk)
-          (Syntax.mk_const Cra.srk post_height_sym) in
+        let post_height_gt_zero = Syntax.mk_lt srk 
+          (Syntax.mk_zero srk)
+          (Syntax.mk_const srk post_height_sym) in
+        let post_height_eq_zero = Syntax.mk_eq srk 
+          (Syntax.mk_zero srk)
+          (Syntax.mk_const srk post_height_sym) in
         let base_case_weight = ProcMap.find (p_entry,p_exit) base_case_map in 
         (*let _, base_case_formula = to_transition_formula base_case_weight in*)
         let _, base_case_formula = 
@@ -2337,25 +2337,25 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
         (*let to_be_squeezed = top_down_formula in (* naive version *) *)
         let to_be_squeezed = 
           (* sophisticated version: assume H' >= 0 inside squeezed version *) 
-          Syntax.mk_and Cra.srk [post_height_gt_zero; top_down_formula] in
+          Syntax.mk_and srk [post_height_gt_zero; top_down_formula] in
         let symbolic_bounds_top_down_formula = 
           if !chora_squeeze_sb || !chora_debug_squeeze
           then top_down_formula_to_symbolic_bounds to_be_squeezed post_height_sym
-          else Syntax.mk_true Cra.srk in
+          else Syntax.mk_true srk in
         let wedge_top_down_formula = 
           if !chora_squeeze_wedge || !chora_debug_squeeze
           then top_down_formula_to_wedge to_be_squeezed post_height_sym
-          else Syntax.mk_true Cra.srk in
+          else Syntax.mk_true srk in
         (*let incorporate_tdf fmla = 
-          Syntax.mk_and Cra.srk [fmla; top_down_formula] in*)
+          Syntax.mk_and srk [fmla; top_down_formula] in*)
         let incorporate_tdf fmla = 
             begin
               let case_split = 
-                  Syntax.mk_or Cra.srk 
-                    [(Syntax.mk_and Cra.srk [post_height_eq_zero; base_case_formula]);
-                     (Syntax.mk_and Cra.srk [post_height_gt_zero; fmla])] in
+                  Syntax.mk_or srk 
+                    [(Syntax.mk_and srk [post_height_eq_zero; base_case_formula]);
+                     (Syntax.mk_and srk [post_height_gt_zero; fmla])] in
               if !chora_squeeze_conjoin
-              then Syntax.mk_and Cra.srk [top_down_formula; case_split]
+              then Syntax.mk_and srk [top_down_formula; case_split]
               else case_split
             end
           in
@@ -2399,7 +2399,7 @@ let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges
   logf ~level:`info "  ]\n";
   let top_down_symbols, top_down_formula = to_transition_formula top_down_summary in  
   logf ~level:`info "@.  tdf: %a"
-      (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
+      (Srk.Syntax.Formula.pp srk) top_down_formula;
   let is_post_height (pre_sym,post_sym) = (pre_sym == height_var_sym_pair.symbol) in 
   let post_height_sym = snd (List.find is_post_height top_down_symbols) in
   top_down_formula, post_height_sym;;
@@ -2463,9 +2463,9 @@ let resource_bound_analysis rg query =
                   Ctx.mk_const x
               in
               let rhs =
-                Syntax.substitute_const Cra.srk subst (K.get_transform cost summary)
+                Syntax.substitute_const srk subst (K.get_transform cost summary)
               in
-              Ctx.mk_and [Syntax.substitute_const Cra.srk subst (K.guard summary);
+              Ctx.mk_and [Syntax.substitute_const srk subst (K.guard summary);
                           Ctx.mk_eq (Ctx.mk_const cost_symbol) rhs ]
             in
             (* Option 2 *)
@@ -2513,30 +2513,30 @@ let resource_bound_analysis rg query =
             in
             let pre_cost_zero =
               let cost_symbol = Cra.V.symbol_of cost in
-              Syntax.substitute_const Cra.srk (fun sym ->
+              Syntax.substitute_const srk (fun sym ->
                   if sym = cost_symbol then
                     Ctx.mk_real QQ.zero
                   else
                     Ctx.mk_const sym)
             in
-            match Wedge.symbolic_bounds_formula ~exists Cra.srk guard cost_symbol with
+            match Wedge.symbolic_bounds_formula ~exists srk guard cost_symbol with
             | `Sat (lower, upper) ->
               begin match lower with
                 | Some lower ->
-                  let lower = Syntax.substitute_map Cra.srk param_map lower in
-                  logf ~level:`always " %a <= cost" (Syntax.pp_expr_unnumbered Cra.srk) lower;
+                  let lower = Syntax.substitute_map srk param_map lower in
+                  logf ~level:`always " %a <= cost" (Syntax.pp_expr_unnumbered srk) lower;
                   logf ~level:`always " %a is o(%a)"
                     Varinfo.pp procedure
-                    BigO.pp (BigO.of_term Cra.srk (pre_cost_zero lower))
+                    BigO.pp (BigO.of_term srk (pre_cost_zero lower))
                 | None -> ()
               end;
               begin match upper with
                 | Some upper ->
-                  let upper = Syntax.substitute_map Cra.srk param_map upper in
-                  logf ~level:`always " cost <= %a" (Syntax.pp_expr_unnumbered Cra.srk) upper;
+                  let upper = Syntax.substitute_map srk param_map upper in
+                  logf ~level:`always " cost <= %a" (Syntax.pp_expr_unnumbered srk) upper;
                   logf ~level:`always " %a is O(%a)"
                   Varinfo.pp procedure
-                  BigO.pp (BigO.of_term Cra.srk (pre_cost_zero upper))
+                  BigO.pp (BigO.of_term srk (pre_cost_zero upper))
                 | None -> ()
               end
             | `Unsat ->
@@ -2562,7 +2562,7 @@ let check_assertions rg query main assertions =
         let phi = Syntax.substitute_const Ctx.context sigma phi in
         let path_condition =
           Ctx.mk_and [K.guard path; Ctx.mk_not phi]
-          |> SrkSimplify.simplify_terms Cra.srk
+          |> SrkSimplify.simplify_terms srk
         in
         logf ~level:`trace "Path condition:@\n%a"
           (Syntax.pp_smtlib2 Ctx.context) path_condition;
@@ -2798,7 +2798,7 @@ let postprocess_summaries summary_list =
           (fun found (vpre,vpost) -> found || vpre == x || vpost == x) 
             false tr_symbols)
       in 
-      let psi = Wedge.cover Cra.srk projection body in 
+      let psi = Wedge.cover srk projection body in 
       let new_summary = of_transition_formula tr_symbols psi in
       (p_entry, p_exit, new_summary)
     in
@@ -3049,7 +3049,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             let recursive_weight_nobc = 
               K.mul (K.mul initially_no_recursion recursive_weight) eventually_recursion in*)*)
             let (tr_symbols, rec_fmla) = to_transition_formula recursive_weight_nobc in
-            logf ~level:`trace "  rec_case_formula_body: @.%a@." (Srk.Syntax.Formula.pp Cra.srk) rec_fmla;
+            logf ~level:`trace "  rec_case_formula_body: @.%a@." (Srk.Syntax.Formula.pp srk) rec_fmla;
             ProcMap.add (p_entry,p_exit) rec_fmla rf_map)
           ProcMap.empty 
           scc.procs in 
