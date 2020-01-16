@@ -883,22 +883,22 @@ let increment_variable value =
       [(Srk.Syntax.mk_const srk (Cra.V.symbol_of value));
        (Srk.Syntax.mk_real srk (Srk.QQ.of_int 1))])
 
-let top_down_formula_to_wedge top_down_formula sym = 
+let depth_bound_formula_to_wedge depth_bound_formula sym = 
   let projection x =
     x = sym ||
     match Cra.V.of_symbol x with
     | Some v -> Core.Var.is_global (Cra.var_of_value v)
     | None -> false
   in
-  let wedge = Wedge.abstract ~exists:projection srk top_down_formula in
+  let wedge = Wedge.abstract ~exists:projection srk depth_bound_formula in
   let level = if !chora_debug_squeeze then `always else `info in
   logf ~level " incorporating squeezed depth formula: %t" 
     (fun f -> Wedge.pp f wedge);
   Wedge.to_formula wedge
   (*let wedge_as_formula = Wedge.to_formula wedge in 
-  Srk.Syntax.mk_and srk [top_down_formula; wedge_as_formula]*)
+  Srk.Syntax.mk_and srk [depth_bound_formula; wedge_as_formula]*)
 
-let top_down_formula_to_symbolic_bounds phi sym = 
+let depth_bound_formula_to_symbolic_bounds phi sym = 
   let level = if !chora_debug_squeeze then `always else `info in
   logf ~level " squeezing depth-bound formula to symbolic bounds formula...";
   let exists x =
@@ -990,7 +990,7 @@ let top_down_formula_to_symbolic_bounds phi sym =
     Syntax.mk_true srk
   *)
  
-let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t) 
+let make_depth_bound_weight_multi procs (ts : K.t Cra.label Cra.WG.t) 
       is_scc_call lower_summaries base_case_map height 
       scc_local_footprint scc_global_footprint scc_footprint
       (* for debugging:  program_vars *) =
@@ -998,7 +998,7 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
   let set_height_zero = assign_value_to_literal height.value 0 in 
   let increment_height = increment_variable height.value in 
   let assume_height_non_negative = assume_literal_leq_value 0 height.value in
-  let top_graph = ref BURG.empty in
+  let depth_graph = ref BURG.empty in
   let dummy_exit_node = ref 0 in (* A dummy exit node representing having finished a base case *)
   let havoc_locals = K.havoc (VarSet.to_list scc_local_footprint) in 
   let havoc_loc_and_inc = K.mul havoc_locals increment_height in 
@@ -1013,14 +1013,14 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
               if not (is_scc_call s t) then 
                 (* A call to a procedure that's in a lower SCC *)
                 let low = M.find (en,ex) lower_summaries in
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight low) t
+                depth_graph := Srk.WeightedGraph.add_edge !depth_graph s (Weight low) t
               else begin
                 (* A call from this SCC back into this SCC *)
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight havoc_loc_and_inc) en;
-                top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight havoc_globals) t
+                depth_graph := Srk.WeightedGraph.add_edge !depth_graph s (Weight havoc_loc_and_inc) en;
+                depth_graph := Srk.WeightedGraph.add_edge !depth_graph s (Weight havoc_globals) t
               end
             | Weight w -> (* Regular (non-call) edge *)
-              top_graph := Srk.WeightedGraph.add_edge !top_graph s (Weight w) t
+              depth_graph := Srk.WeightedGraph.add_edge !depth_graph s (Weight w) t
           end
         | _ -> () (* Add, Mul, Star, etc. *) in
       NPathexpr.eval add_edges_alg pathexpr) procs;
@@ -1031,10 +1031,10 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
            which is good, because that's the main thing we want to get out of this analysis. *)
       let base_case_weight = ProcMap.find (p_entry,p_exit) base_case_map in 
       let weight = K.mul base_case_weight top in
-      top_graph := Srk.WeightedGraph.add_edge !top_graph p_entry (Weight weight) !dummy_exit_node)
+      depth_graph := Srk.WeightedGraph.add_edge !depth_graph p_entry (Weight weight) !dummy_exit_node)
     procs;
   let td_formula_map = (List.fold_left (fun td_formula_map (p_entry,p_exit,pathexpr) ->
-      match WeightedGraph.path_weight !top_graph p_entry !dummy_exit_node with
+      match WeightedGraph.path_weight !depth_graph p_entry !dummy_exit_node with
       | Weight cycles ->
         let td_summary = K.mul set_height_zero cycles in
         let td_summary = K.mul td_summary assume_height_non_negative in
@@ -1047,9 +1047,9 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
           debug_print_depth_wedge td_summary;
           logf ~level:`always "  ]";
         end);*)
-        let _, top_down_formula = to_transition_formula td_summary in
-        logf ~level:`info "@.  tdf%s: %a" (proc_name_triple_string (p_entry,p_exit))
-            (Srk.Syntax.Formula.pp srk) top_down_formula;
+        let _, depth_bound_formula = to_transition_formula td_summary in
+        logf ~level:`info "@.  dbf%s: %a" (proc_name_triple_string (p_entry,p_exit))
+            (Srk.Syntax.Formula.pp srk) depth_bound_formula;
         let post_height_sym = post_symbol height.symbol in
         let post_height_gt_zero = Syntax.mk_lt srk 
           (Syntax.mk_zero srk)
@@ -1061,48 +1061,48 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
         (*let _, base_case_formula = to_transition_formula base_case_weight in*)
         let _, base_case_formula = 
           to_transition_formula_with_unmodified base_case_weight scc_global_footprint in 
-        (*let to_be_squeezed = top_down_formula in (* naive version *) *)
+        (*let to_be_squeezed = depth_bound_formula in (* naive version *) *)
         let to_be_squeezed = 
           (* sophisticated version: assume H' >= 0 inside squeezed version *) 
-          Syntax.mk_and srk [post_height_gt_zero; top_down_formula] in
-        let symbolic_bounds_top_down_formula = 
+          Syntax.mk_and srk [post_height_gt_zero; depth_bound_formula] in
+        let symbolic_bounds_depth_bound_formula = 
           if !chora_squeeze_sb || !chora_debug_squeeze
-          then top_down_formula_to_symbolic_bounds to_be_squeezed post_height_sym
+          then depth_bound_formula_to_symbolic_bounds to_be_squeezed post_height_sym
           else Syntax.mk_true srk in
-        let wedge_top_down_formula = 
+        let wedge_depth_bound_formula = 
           if !chora_squeeze_wedge || !chora_debug_squeeze
-          then top_down_formula_to_wedge to_be_squeezed post_height_sym
+          then depth_bound_formula_to_wedge to_be_squeezed post_height_sym
           else Syntax.mk_true srk in
-        (*let incorporate_tdf fmla = 
-          Syntax.mk_and srk [fmla; top_down_formula] in*)
-        let incorporate_tdf fmla = 
+        (*let incorporate_dbf fmla = 
+          Syntax.mk_and srk [fmla; depth_bound_formula] in*)
+        let incorporate_dbf fmla = 
             begin
               let case_split = 
                   Syntax.mk_or srk 
                     [(Syntax.mk_and srk [post_height_eq_zero; base_case_formula]);
                      (Syntax.mk_and srk [post_height_gt_zero; fmla])] in
               if !chora_squeeze_conjoin
-              then Syntax.mk_and srk [top_down_formula; case_split]
+              then Syntax.mk_and srk [depth_bound_formula; case_split]
               else case_split
             end
           in
-        let final_top_down_formula = 
+        let final_depth_bound_formula = 
           if !chora_squeeze_sb
           then (if !chora_squeeze_wedge 
                 then
                   failwith "ERROR: don't use -chora-squeeze and -chora-squeeze-sb simultaneously"
                 else
-                  incorporate_tdf symbolic_bounds_top_down_formula)
+                  incorporate_dbf symbolic_bounds_depth_bound_formula)
           else (if !chora_squeeze_wedge 
-                then incorporate_tdf wedge_top_down_formula
-                else top_down_formula) in 
-        ProcMap.add (p_entry,p_exit) final_top_down_formula td_formula_map
+                then incorporate_dbf wedge_depth_bound_formula
+                else depth_bound_formula) in 
+        ProcMap.add (p_entry,p_exit) final_depth_bound_formula td_formula_map
       | _ -> failwith "A call was found in td_summary")
     ProcMap.empty procs) in
   td_formula_map;;
 
 (*
-let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges = 
+let make_depth_bound_weight_oneproc p_entry path_weight_internal top scc_call_edges = 
   let height_var_sym_pair = make_aux_variable "H" in
   (*let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
   let height_var_val = Cra.VVal height_var in 
@@ -1120,16 +1120,16 @@ let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges
     K.add running_total fragment_weight
     ) scc_call_edges K.zero in
   logf ~level:`info "  ]";
-  let top_down_summary = K.mul set_height_zero (K.star (K.mul increment_height sum_of_fragments)) in
+  let depth_bound_summary = K.mul set_height_zero (K.star (K.mul increment_height sum_of_fragments)) in
   logf ~level:`info "  phi_td = [";
-  print_indented 15 top_down_summary;
+  print_indented 15 depth_bound_summary;
   logf ~level:`info "  ]\n";
-  let top_down_symbols, top_down_formula = to_transition_formula top_down_summary in  
-  logf ~level:`info "@.  tdf: %a"
-      (Srk.Syntax.Formula.pp srk) top_down_formula;
+  let depth_bound_symbols, depth_bound_formula = to_transition_formula depth_bound_summary in  
+  logf ~level:`info "@.  dbf: %a"
+      (Srk.Syntax.Formula.pp srk) depth_bound_formula;
   let is_post_height (pre_sym,post_sym) = (pre_sym == height_var_sym_pair.symbol) in 
-  let post_height_sym = snd (List.find is_post_height top_down_symbols) in
-  top_down_formula, post_height_sym;;
+  let post_height_sym = snd (List.find is_post_height depth_bound_symbols) in
+  depth_bound_formula, post_height_sym;;
 *)
 
 let get_procedure_summary query rg procedure = 
@@ -1515,6 +1515,8 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
   summaries
 
 
+(* This function post-processes all procedure summaries-- turning them
+    into disjunctions of wedges-- if chora_use_wedgecover is true. *)
 let postprocess_summaries summary_list =
   if !chora_use_wedgecover then 
     let postprocess_summary parts = 
@@ -1722,25 +1724,25 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           else 
             (ChoraC.RB (simple_height), Srk.Syntax.Symbol.Set.empty) in 
 
-        logf ~level:`info "  Beginning top-down analysis"; 
-        (*   ***   Compute top-down summaries for each procedure   ***   *)
-        let top_down_formula_map = 
-          make_top_down_weight_multi scc.procs (*top*) ts is_scc_call lower_summaries 
+        logf ~level:`info "  Beginning depth-bound analysis"; 
+        (*   ***   Compute depth-bound summaries for each procedure   ***   *)
+        let depth_bound_formula_map = 
+          make_depth_bound_weight_multi scc.procs (*top*) ts is_scc_call lower_summaries 
             base_case_map simple_height 
             scc_local_footprint scc_global_footprint scc_footprint in
-        logf ~level:`info "  Finished top-down analysis"; 
+        logf ~level:`info "  Finished depth-bound analysis"; 
 
         (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
         let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
             let base_case_weight = ProcMap.find (p_entry,p_exit) base_case_map in 
-            (*let bounds = ChoraC.make_call_abstraction base_case_weight scc_global_footprint in *)
+            (*let bounds = ChoraC.make_hypothetical_summary base_case_weight scc_global_footprint in *)
             let (tr_symbols, base_case_fmla) = 
                 to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
-            let bounds = ChoraC.make_call_abstraction base_case_fmla tr_symbols in 
+            let bounds = ChoraC.make_hypothetical_summary base_case_fmla tr_symbols in 
             ProcMap.add (p_entry,p_exit) bounds b_map)
           ProcMap.empty 
           scc.procs in 
-        (* Construct the recursive-case weight using the formula computed by make_call_abstraction *)
+        (* Construct the recursive-case weight using the formula computed by make_hypothetical_summary *)
         let call_abstraction_weight_map = ProcMap.mapi
           (fun (p_entry,p_exit) info_structure ->
             let call_abstraction_weight = 
@@ -1783,13 +1785,13 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
 
         (*let summary_list = 
           ChoraC.make_height_based_summaries
-            rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model in*)
+            rec_fmla_map bounds_map program_vars depth_bound_formula_map scc height_model in*)
 
         let proc_key_list = List.map (fun (p_entry,p_exit,pathexpr) -> (p_entry,p_exit)) scc.procs in
          
         let summary_fmla_list = 
           ChoraC.make_height_based_summaries
-            rec_fmla_map bounds_map top_down_formula_map proc_key_list height_model excepting in
+            rec_fmla_map bounds_map depth_bound_formula_map proc_key_list height_model excepting in
 
         let summary_list = List.map (fun (proc_key,summary_fmla) ->
             let (p_entry,p_exit) = proc_key in
@@ -1860,7 +1862,7 @@ let _ =
   CmdLine.register_config
     ("-chora-debug-squeeze",
      Arg.Set chora_debug_squeeze,
-     " Print 'squeezed' depth bound formula");
+     " Print 'squeezed' depth-bound formula");
   CmdLine.register_config
     ("-chora-debug-recs",
      Arg.Set ChoraC.chora_debug_recs,

@@ -73,7 +73,8 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
     call_abstraction_fmla : 'a Srk.Syntax.formula
   }
 
-  let make_call_abstraction base_case_fmla tr_symbols = 
+  (* This function is one of the main entrypoints of choraCore *)
+  let make_hypothetical_summary base_case_fmla tr_symbols = 
     let param_prime = Str.regexp "param[0-9]+'" in
     let projection x = 
       (
@@ -315,7 +316,7 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
    *      we started from a recurrence solution that is the same for all
    *      procedures in the current SCC. *)
   let build_height_based_summary 
-      solution b_in_b_out_map bounds top_down_formula 
+      solution b_in_b_out_map bounds depth_bound_formula 
       proc_key = 
     (* b_in = 0: In the height-based analysis, initial b_in values equal zero *)
     let solution_starting_at_zero = rename_b_in_to_zero b_in_b_out_map solution in 
@@ -331,9 +332,9 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
         List.map make_bounding_conjuncts bounds.bound_pairs in 
       Srk.Syntax.mk_and srk bounding_conjuncts in 
     log_fmla_proc "@.    bddg conj%s: %a" proc_key bounding_conjunction; 
-    (* top_down formula /\ (solution with b_in = 0) /\ each term <= each b_out *)
+    (* depth_bound formula /\ (solution with b_in = 0) /\ each term <= each b_out *)
     let height_based_summary_fmla = 
-      Srk.Syntax.mk_and srk [top_down_formula; 
+      Srk.Syntax.mk_and srk [depth_bound_formula; 
                                  solution_starting_at_zero;
                                  bounding_conjunction] in
     log_fmla_proc "@.    HBA_summary_fmla%s: %a" proc_key height_based_summary_fmla; 
@@ -373,16 +374,16 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
        different formulas so that the ones that are supposed to talk to
        each other do so, and the ones that aren't don't. *)
   let build_dual_height_summary 
-        rb rm mb rm_solution mb_solution b_in_b_out_map bounds top_down_formula 
+        rb rm mb rm_solution mb_solution b_in_b_out_map bounds depth_bound_formula 
         excepting proc_key height_model = 
-    (* F1: rb top-down formula (Root-->Baseline), serving to constrain rb *)
-    let rb_topdown = lower_some_symbols top_down_formula excepting in
-    log_fmla_proc "@.    rb_tdf%s: %a" proc_key rb_topdown;
-    (* F2: rm top-down formula (Root-->Midline), serving to constrain rm *)
-    let rm_topdown = substitute_one_sym 
-      top_down_formula (post_symbol rb.symbol) (post_symbol rm.symbol) in
-    let rm_topdown = upper_some_symbols rm_topdown excepting in
-    log_fmla_proc "@.    rm_tdf%s: %a" proc_key rm_topdown;
+    (* F1: rb depth-bound formula (Root-->Baseline), serving to constrain rb *)
+    let rb_depthbound = lower_some_symbols depth_bound_formula excepting in
+    log_fmla_proc "@.    rb_dbf%s: %a" proc_key rb_depthbound;
+    (* F2: rm depth-bound formula (Root-->Midline), serving to constrain rm *)
+    let rm_depthbound = substitute_one_sym 
+      depth_bound_formula (post_symbol rb.symbol) (post_symbol rm.symbol) in
+    let rm_depthbound = upper_some_symbols rm_depthbound excepting in
+    log_fmla_proc "@.    rm_dbf%s: %a" proc_key rm_depthbound;
     (* F3: height equation: rb = rm + mb*)
     let rb_const = Srk.Syntax.mk_const srk (post_symbol rb.symbol) in 
     let rm_const = Srk.Syntax.mk_const srk (post_symbol rm.symbol) in 
@@ -430,7 +431,7 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
         List.map make_bridging_conjuncts scc_b_in_symbols in 
       Srk.Syntax.mk_and srk bridging_conjuncts in 
     log_fmla_proc "@.    bd_bridge conj%s: %a" proc_key bound_bridge;
-    let first_part = [rb_topdown;rm_topdown;height_eq;height_ineq] in
+    let first_part = [rb_depthbound;rm_depthbound;height_eq;height_ineq] in
     let last_part = [mb_solution;bound_bridge;rm_solution;bound_upper] in
     (* ===== Optional "Fallback" to height-based analysis ===== *)
     (* F9(optional) bound_rb: each prog. var. term <= each b_out_rb *)
@@ -998,7 +999,7 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   (* Called once per SCC per value of allow_decrease *)
   let build_wedge_map 
         b_out_definitions_map b_in_b_out_map b_out_symbols bounds_map 
-        top_down_formula_map proc_key_list rec_fmla_map ~allow_decrease =
+        depth_bound_formula_map proc_key_list rec_fmla_map ~allow_decrease =
     (* For each procedure, create a transition formula for use in extraction *)
     let extraction_formula_map = 
       List.fold_left 
@@ -1029,18 +1030,19 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   (* Called once per SCC per value of allow_decrease *)
   let build_wedges_and_extract_recurrences 
         b_out_definitions_map b_in_b_out_map b_out_symbols 
-        bounds_map top_down_formula_map 
+        bounds_map depth_bound_formula_map 
         proc_key_list post_height_sym rec_fmla_map ~allow_decrease =
     let wedge_map = build_wedge_map
       b_out_definitions_map b_in_b_out_map b_out_symbols 
-      bounds_map top_down_formula_map 
+      bounds_map depth_bound_formula_map 
       proc_key_list rec_fmla_map ~allow_decrease in
     extract_and_solve_recurrences 
       b_in_b_out_map wedge_map post_height_sym ~allow_decrease
     (* returns solution *)
-  
+ 
+  (* This function is one of the main entrypoints of choraCore *)
   let make_height_based_summaries
-        rec_fmla_map bounds_map top_down_formula_map 
+        rec_fmla_map bounds_map depth_bound_formula_map 
         proc_key_list height_model excepting =
     (* *)
     let (b_out_definitions_map, b_in_b_out_map, b_out_symbols) = 
@@ -1054,16 +1056,16 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
       (* ---------- Extract and solve recurrences --------- *)
       let solution = build_wedges_and_extract_recurrences 
         b_out_definitions_map b_in_b_out_map b_out_symbols 
-        bounds_map top_down_formula_map 
+        bounds_map depth_bound_formula_map 
         proc_key_list (post_symbol rb.symbol) rec_fmla_map ~allow_decrease:!chora_just_allow_decrease in
       (* ---------- Build summaries using recurrence solution --------- *)
       let summary_list = 
         List.fold_left (fun sums proc_key ->
-          let top_down_formula = 
-              ProcMap.find proc_key top_down_formula_map in 
+          let depth_bound_formula = 
+              ProcMap.find proc_key depth_bound_formula_map in 
           let bounds = ProcMap.find proc_key bounds_map in 
           let summary = build_height_based_summary 
-            solution b_in_b_out_map bounds top_down_formula proc_key in
+            solution b_in_b_out_map bounds depth_bound_formula proc_key in
           (proc_key,summary)::sums)
         []
         proc_key_list in 
@@ -1077,22 +1079,22 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
       (* ---------- Extract and solve recurrences --------- *)
       let rm_solution = build_wedges_and_extract_recurrences 
         b_out_definitions_map b_in_b_out_map b_out_symbols 
-        bounds_map top_down_formula_map 
+        bounds_map depth_bound_formula_map 
         proc_key_list (post_symbol rm.symbol) rec_fmla_map ~allow_decrease:true in
       (* *)
       let mb_solution = build_wedges_and_extract_recurrences 
         b_out_definitions_map b_in_b_out_map b_out_symbols 
-        bounds_map top_down_formula_map 
+        bounds_map depth_bound_formula_map 
         proc_key_list (post_symbol mb.symbol) rec_fmla_map ~allow_decrease:false in
       (* ---------- Build summaries using recurrence solution --------- *)
       let summary_list = 
         List.fold_left (fun sums proc_key ->
-          let top_down_formula = 
-              ProcMap.find proc_key top_down_formula_map in 
+          let depth_bound_formula = 
+              ProcMap.find proc_key depth_bound_formula_map in 
           let bounds = ProcMap.find proc_key bounds_map in 
           let summary = build_dual_height_summary
             rb rm mb rm_solution mb_solution b_in_b_out_map bounds 
-            top_down_formula excepting proc_key 
+            depth_bound_formula excepting proc_key 
             height_model in
           (proc_key,summary)::sums)
         []
