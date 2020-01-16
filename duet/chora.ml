@@ -21,7 +21,6 @@ module A = Interproc.MakePathExpr(K)
 
 (*let srk = Cra.srk *)
 
-
 module type AuxVarHandler = sig
   type t (* type of an auxiliary variable *)
          (*   e.g., a Cra.value *)
@@ -29,8 +28,16 @@ module type AuxVarHandler = sig
       value: t; 
       symbol: Srk.Syntax.symbol
   }
-  val make_variable : string -> val_sym
-  val srk : 'a Syntax.context
+  val make_aux_variable : string -> val_sym
+
+  type srk_ctx_magic
+  val srk : srk_ctx_magic Srk.Syntax.context
+end;;
+
+module type ProcHandler = sig
+  module ProcMap : BatMap.S
+  val proc_name_triple_string : ProcMap.key -> string
+  val proc_name_string : ProcMap.key -> string
 end;;
 
 module IntPair = struct
@@ -41,7 +48,107 @@ end
 module IntPairMap = BatMap.Make(IntPair)
 module IntPairSet = BatSet.Make(IntPair)
 
+module AuxHandlerC = struct
+  type t = Cra.value
+  type val_sym = { 
+      value: Cra.value; 
+      symbol: Srk.Syntax.symbol
+  }
+  let make_aux_variable name = 
+    let new_var = Core.Var.mk (Core.Varinfo.mk_global name (Core.Concrete (Core.Int 32))) in 
+    let new_var_val = Cra.VVal new_var in 
+    (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
+    let new_var_sym = Cra.V.symbol_of new_var_val in 
+    {value  = new_var_val;
+     symbol = new_var_sym}
+
+  type srk_ctx_magic = Cra.Ctx.t
+  let srk = Cra.srk
+  (* YYY *)
+
+end
+
+module ProcHandlerC = struct
+  module ProcMap = IntPairMap
+
+  let procedure_names_map = ref ProcMap.empty
+
+  let proc_name_triple_string (entry,exit) = 
+    if ProcMap.mem (entry,exit) !procedure_names_map then 
+      let name = ProcMap.find (entry,exit) !procedure_names_map in
+      Format.sprintf "(%d,%d,\"%s\")" entry exit name
+    else
+      Format.sprintf "(%d,%d,?)" entry exit
+  
+  let proc_name_string (entry,exit) = 
+    if ProcMap.mem (entry,exit) !procedure_names_map then 
+      let name = ProcMap.find (entry,exit) !procedure_names_map in
+      Format.sprintf "%s" name
+    else
+      Format.sprintf "<unknown procedure(%d,%d)>" entry exit
+end
+
+module MakeChoraCore (Proc:ProcHandler)(Aux:AuxVarHandler) = struct
+  (* XXX *)
+
+end
+
+module ChoraC = MakeChoraCore(ProcHandlerC)(AuxHandlerC)
+
 module ProcMap = IntPairMap
+
+let procedure_names_map = ref ProcMap.empty
+
+let proc_name_triple_string (entry,exit) = 
+  if ProcMap.mem (entry,exit) !procedure_names_map then 
+    let name = ProcMap.find (entry,exit) !procedure_names_map in
+    Format.sprintf "(%d,%d,\"%s\")" entry exit name
+  else
+    Format.sprintf "(%d,%d,?)" entry exit
+
+let proc_name_string (entry,exit) = 
+  if ProcMap.mem (entry,exit) !procedure_names_map then 
+    let name = ProcMap.find (entry,exit) !procedure_names_map in
+    Format.sprintf "%s" name
+  else
+    Format.sprintf "<unknown procedure(%d,%d)>" entry exit
+
+(*
+let proc_name_triple entry exit channel = 
+  if ProcMap.mem (entry,exit) !procedure_names_map then 
+    let name = ProcMap.find (entry,exit) !procedure_names_map in
+    Format.fprintf channel "(%d,%d,\"%s\")" entry exit name
+  else
+    Format.fprintf channel "(%d,%d,?)" entry exit
+
+let proc_name entry exit channel = 
+  if ProcMap.mem (entry,exit) !procedure_names_map then 
+    let name = ProcMap.find (entry,exit) !procedure_names_map in
+    Format.fprintf channel "%s" name
+  else
+    Format.fprintf channel "<unknown procedure(%d,%d)>" entry exit
+*)
+
+(* ugly: copied from newtonDomain just for debugging *)
+let print_indented ?(level=`info) indent k =
+      logf ~level:level "%a"
+      (fun f () -> Format.printf "%s"
+          (SrkUtil.mk_show (fun formatter tr ->
+              Format.pp_open_vbox formatter indent;
+              Format.pp_print_break formatter 0 0;
+              Format.fprintf formatter "%a" K.pp tr;
+              Format.pp_close_box formatter ()) k)) ()
+
+let log_fmla_proc ?(level=`info) formatter proc_key formula = 
+  logf ~level formatter (proc_name_triple_string proc_key)
+      (Srk.Syntax.Formula.pp Cra.srk) formula
+
+let log_tr_proc ?(level=`info) formatter p_entry p_exit tr = 
+  logf ~level formatter (proc_name_triple_string (p_entry,p_exit));
+  print_indented 17 tr;
+  logf ~level "@."
+
+
 
 (* ---------------------------------- *)
 (*    Begin stuff from old pathexpr   *)
@@ -518,22 +625,6 @@ end
 
 open BatPervasives
 
-let procedure_names_map = ref ProcMap.empty
-
-let proc_name_triple entry exit channel = 
-  if ProcMap.mem (entry,exit) !procedure_names_map then 
-    let name = ProcMap.find (entry,exit) !procedure_names_map in
-    Format.fprintf channel "(%d,%d,\"%s\")" entry exit name
-  else
-    Format.fprintf channel "(%d,%d,?)" entry exit
-
-let proc_name entry exit channel = 
-  if ProcMap.mem (entry,exit) !procedure_names_map then 
-    let name = ProcMap.find (entry,exit) !procedure_names_map in
-    Format.fprintf channel "%s" name
-  else
-    Format.fprintf channel "<unknown procedure(%d,%d)>" entry exit
-
 module type Weight = WeightedGraph.Weight
 (*module M = BatMap.Make(IntPair)*)
 module M = WeightedGraph.M
@@ -872,23 +963,13 @@ type height_model_type =
     (*   where the midline is defined as the depth of the shallowest leaf *)
     | RB_RM_MB of val_sym * val_sym * val_sym 
 
-let make_variable name = 
+let make_aux_variable name = 
   let new_var = Core.Var.mk (Core.Varinfo.mk_global name (Core.Concrete (Core.Int 32))) in 
   let new_var_val = Cra.VVal new_var in 
   (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
   let new_var_sym = Cra.V.symbol_of new_var_val in 
   {value  = new_var_val;
    symbol = new_var_sym}
-
-(* ugly: copied from newtonDomain just for debugging *)
-let print_indented ?(level=`info) indent k =
-      logf ~level:level "%a"
-      (fun f () -> Format.printf "%s"
-          (SrkUtil.mk_show (fun formatter tr ->
-              Format.pp_open_vbox formatter indent;
-              Format.pp_print_break formatter 0 0;
-              Format.fprintf formatter "%a" K.pp tr;
-              Format.pp_close_box formatter ()) k)) ()
 
 let post_symbol =
   Memo.memo (fun sym ->
@@ -1065,7 +1146,7 @@ let make_call_abstraction base_case_fmla tr_symbols =
       let name = Srk.Syntax.Term.show Cra.srk term in
       match String.index_opt name '@' with | Some i -> () | None ->
       begin
-        let bounding_var_sym_pair = make_variable "B_in" in
+        let bounding_var_sym_pair = make_aux_variable "B_in" in
         (*let bounding_var = Core.Var.mk (Core.Varinfo.mk_global "B_in" (Core.Concrete (Core.Int 32))) in 
           let bounding_var_sym = Cra.V.symbol_of (Cra.VVal bounding_var) in  *)
         let bounding_term = Srk.Syntax.mk_const Cra.srk bounding_var_sym_pair.symbol in 
@@ -1083,7 +1164,7 @@ let make_call_abstraction base_case_fmla tr_symbols =
     | (`Geq, vec) ->
       add_bounding_var vec true in 
   List.iter handle_constraint (Wedge.polyhedron wedge);
-  (*let rec_flag_var_sym_pair = make_variable "Recursion_Flag" in
+  (*let rec_flag_var_sym_pair = make_aux_variable "Recursion_Flag" in
   let rec_flag_var = Core.Var.mk (Core.Varinfo.mk_global "Recursion_Flag" ( Core.Concrete (Core.Int 32))) in 
     let rec_flag_val = Cra.VVal rec_flag_var in 
     let _ = Cra.V.symbol_of rec_flag_val in (* Add to symbol table... (HACK!) *)
@@ -1261,16 +1342,6 @@ let build_recurrence sub_cs recurrences target_inner_sym target_outer_sym
 let is_an_inner_symbol sym b_in_b_out_map = 
   Srk.Syntax.Symbol.Map.mem sym b_in_b_out_map
 
-let log_fmla_proc ?(level=`info) formatter proc_key formula = 
-  let (p_entry,p_exit) = proc_key in 
-  logf ~level formatter (proc_name_triple p_entry p_exit)
-      (Srk.Syntax.Formula.pp Cra.srk) formula
-
-let log_tr_proc ?(level=`info) formatter p_entry p_exit tr = 
-  logf ~level formatter (proc_name_triple p_entry p_exit);
-  print_indented 17 tr;
-  logf ~level "@."
-
 let rename_b_in_to_zero b_in_b_out_map solution = 
   let subst_b_in_with_zeros sym = 
     if is_an_inner_symbol sym b_in_b_out_map
@@ -1298,7 +1369,7 @@ let build_height_based_summary
   (* b_in = 0: In the height-based analysis, initial b_in values equal zero *)
   let solution_starting_at_zero = rename_b_in_to_zero b_in_b_out_map solution in 
   let level = if !chora_debug_recs then `always else `info in
-  log_fmla_proc ~level "@.    simplified%t: @.    %a" proc_key solution_starting_at_zero;
+  log_fmla_proc ~level "@.    simplified%s: @.    %a" proc_key solution_starting_at_zero;
   (* each term <= each b_out:  *)
   let bounding_conjunction = 
     let make_bounding_conjuncts (in_sym,term) =
@@ -1308,13 +1379,13 @@ let build_height_based_summary
     let bounding_conjuncts = 
       List.map make_bounding_conjuncts bounds.bound_pairs in 
     Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
-  log_fmla_proc "@.    bddg conj%t: %a" proc_key bounding_conjunction; 
+  log_fmla_proc "@.    bddg conj%s: %a" proc_key bounding_conjunction; 
   (* top_down formula /\ (solution with b_in = 0) /\ each term <= each b_out *)
   let height_based_summary_fmla = 
     Srk.Syntax.mk_and Cra.srk [top_down_formula; 
                                solution_starting_at_zero;
                                bounding_conjunction] in
-  log_fmla_proc "@.    HBA_summary_fmla%t: %a" proc_key height_based_summary_fmla; 
+  log_fmla_proc "@.    HBA_summary_fmla%s: %a" proc_key height_based_summary_fmla; 
   height_based_summary_fmla
   (*
     (* Produce the final summary from this conjunction formula *)
@@ -1368,30 +1439,30 @@ let build_dual_height_summary
       excepting proc_key height_model = 
   (* F1: rb top-down formula (Root-->Baseline), serving to constrain rb *)
   let rb_topdown = lower_some_symbols top_down_formula excepting in
-  log_fmla_proc "@.    rb_tdf%t: %a" proc_key rb_topdown;
+  log_fmla_proc "@.    rb_tdf%s: %a" proc_key rb_topdown;
   (* F2: rm top-down formula (Root-->Midline), serving to constrain rm *)
   let rm_topdown = substitute_one_sym 
     top_down_formula (post_symbol rb.symbol) (post_symbol rm.symbol) in
   let rm_topdown = upper_some_symbols rm_topdown excepting in
-  log_fmla_proc "@.    rm_tdf%t: %a" proc_key rm_topdown;
+  log_fmla_proc "@.    rm_tdf%s: %a" proc_key rm_topdown;
   (* F3: height equation: rb = rm + mb*)
   let rb_const = Srk.Syntax.mk_const Cra.srk (post_symbol rb.symbol) in 
   let rm_const = Srk.Syntax.mk_const Cra.srk (post_symbol rm.symbol) in 
   let mb_const = Srk.Syntax.mk_const Cra.srk (post_symbol mb.symbol) in 
   let height_eq = Srk.Syntax.mk_eq Cra.srk rb_const
     (Srk.Syntax.mk_add Cra.srk [rm_const; mb_const]) in
-  log_fmla_proc "@.    ht_eq%t: %a" proc_key height_eq;
+  log_fmla_proc "@.    ht_eq%s: %a" proc_key height_eq;
   (* F3: height inequation: rm <= rb *)
   let height_ineq = Srk.Syntax.mk_leq Cra.srk rm_const rb_const in
-  log_fmla_proc "@.    ht_ineq%t: %a" proc_key height_ineq;
+  log_fmla_proc "@.    ht_ineq%s: %a" proc_key height_ineq;
   (* F5: mb solution relating mb, b_in_low, b_out_low, with b_in_low = 0 *)
   let original_mb_solution = mb_solution in 
   let mb_solution = rename_b_in_to_zero b_in_b_out_map mb_solution in 
   let mb_solution = lower_some_symbols mb_solution excepting in
-  log_fmla_proc "@.    mb_simplified%t: %a" proc_key mb_solution;
+  log_fmla_proc "@.    mb_simplified%s: %a" proc_key mb_solution;
   (* F6: rm solution relating rm, b_in_up, b_out_up *)
   let rm_solution = upper_some_symbols rm_solution excepting in
-  log_fmla_proc "@.    rm_unsimplified%t: %a" proc_key rm_solution;
+  log_fmla_proc "@.    rm_unsimplified%s: %a" proc_key rm_solution;
   (* F7: bound_upper: each prog. var. term <= each b_out_up:  *)
   let bound_upper = 
     let make_bounding_conjuncts (in_sym,term) =
@@ -1401,7 +1472,7 @@ let build_dual_height_summary
       List.map make_bounding_conjuncts bounds.bound_pairs in 
     Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
   let bound_upper = upper_some_symbols bound_upper excepting in 
-  log_fmla_proc "@.    bd_up conj%t: %a" proc_key bound_upper;
+  log_fmla_proc "@.    bd_up conj%s: %a" proc_key bound_upper;
   (* F8: bound_bridge: 0 <= b_in_up /\ b_in_up <= b_out_low *)
   let bound_bridge = 
     let make_bridging_conjuncts in_sym =
@@ -1420,7 +1491,7 @@ let build_dual_height_summary
     let bridging_conjuncts = 
       List.map make_bridging_conjuncts scc_b_in_symbols in 
     Srk.Syntax.mk_and Cra.srk bridging_conjuncts in 
-  log_fmla_proc "@.    bd_bridge conj%t: %a" proc_key bound_bridge;
+  log_fmla_proc "@.    bd_bridge conj%s: %a" proc_key bound_bridge;
   let first_part = [rb_topdown;rm_topdown;height_eq;height_ineq] in
   let last_part = [mb_solution;bound_bridge;rm_solution;bound_upper] in
   (* ===== Optional "Fallback" to height-based analysis ===== *)
@@ -1434,20 +1505,20 @@ let build_dual_height_summary
         List.map make_bounding_conjuncts bounds.bound_pairs in 
       Srk.Syntax.mk_and Cra.srk bounding_conjuncts in 
     let bound_rb = rb_some_symbols bound_rb excepting in 
-    log_fmla_proc "@.    bd_rb conj%t: %a" proc_key bound_rb;
+    log_fmla_proc "@.    bd_rb conj%s: %a" proc_key bound_rb;
     (* F10(optional) rb solution relating rb, b_in_rb, b_out_rb with b_in_rb=0 *)
     let rb_solution = substitute_one_sym 
       original_mb_solution (post_symbol mb.symbol) (post_symbol rb.symbol) in
     let rb_solution = rename_b_in_to_zero b_in_b_out_map rb_solution in 
     let rb_solution = rb_some_symbols rb_solution excepting in
-    log_fmla_proc "@.    rb_simplified%t: %a" proc_key rb_solution;
+    log_fmla_proc "@.    rb_simplified%s: %a" proc_key rb_solution;
     [bound_rb;rb_solution]
   end else [] in 
   (* ==============  End of Fallback section   ============== *)
   (* big_conjunction *)
   let dual_height_summary_fmla = Srk.Syntax.mk_and Cra.srk 
     (first_part @ fallback @ last_part) in
-  log_fmla_proc "@.    DHA conj%t: %a" proc_key dual_height_summary_fmla; 
+  log_fmla_proc "@.    DHA conj%s: %a" proc_key dual_height_summary_fmla; 
   dual_height_summary_fmla
   (*
     (* Produce the final summary from this conjunction formula *)
@@ -2259,16 +2330,16 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
         let td_summary = K.mul set_height_zero cycles in
         let td_summary = K.mul td_summary assume_height_non_negative in
         let td_summary = project td_summary in (* FIXME Not sure this is needed *)
-        logf ~level:`info "  multi_phi_td%t = [" (proc_name_triple p_entry p_exit);
+        logf ~level:`info "  multi_phi_td%s = [" (proc_name_triple_string (p_entry,p_exit));
         print_indented 15 td_summary; logf ~level:`info "  ]\n";
         (*(if !chora_print_depth_bound_wedges then
         begin
-          logf ~level:`always "  wedge[phi_td%t] is [" (proc_name_triple p_entry p_exit);
+          logf ~level:`always "  wedge[phi_td%t] is [" (proc_name_triple_string (p_entry,p_exit));
           debug_print_depth_wedge td_summary;
           logf ~level:`always "  ]";
         end);*)
         let _, top_down_formula = to_transition_formula td_summary in
-        logf ~level:`info "@.  tdf%t: %a" (proc_name_triple p_entry p_exit)
+        logf ~level:`info "@.  tdf%s: %a" (proc_name_triple_string (p_entry,p_exit))
             (Srk.Syntax.Formula.pp Cra.srk) top_down_formula;
         let post_height_sym = post_symbol height.symbol in
         let post_height_gt_zero = Syntax.mk_lt Cra.srk 
@@ -2323,7 +2394,7 @@ let make_top_down_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
 
 (*
 let make_top_down_weight_oneproc p_entry path_weight_internal top scc_call_edges = 
-  let height_var_sym_pair = make_variable "H" in
+  let height_var_sym_pair = make_aux_variable "H" in
   (*let height_var = Core.Var.mk (Core.Varinfo.mk_global "H" (Core.Concrete (Core.Int 32))) in 
   let height_var_val = Cra.VVal height_var in 
   let height_var_sym = Cra.V.symbol_of height_var_val in *)
@@ -2900,7 +2971,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         logf ~level:`info "]@.";
 
         List.iter (fun (u,v,p) -> 
-            (logf ~level:`info "  Proc%t = %t" (proc_name_triple u v) (fun f -> NPathexpr.pp f p))) scc.procs;
+            (logf ~level:`info "  Proc%s = %t" (proc_name_triple_string (u,v)) (fun f -> NPathexpr.pp f p))) scc.procs;
         let split_expr_map = List.fold_left (fun se_map (p_entry,p_exit,pathexpr) ->
             let edge s t = NPathexpr.mk_edge context s t in
             let pe_algebra = BURG.pathexp_algebra context in 
@@ -2917,17 +2988,17 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             let (rec_pe,nonrec_pe) = ProcMap.find (p_entry,p_exit) split_expr_map in
             (*let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in*)
             let base_case_weight = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_zero) nonrec_pe) in
-            logf ~level:`info "  base_case%t = [" (proc_name_triple p_entry p_exit); 
+            logf ~level:`info "  base_case%s = [" (proc_name_triple_string (p_entry,p_exit)); 
               print_indented 15 base_case_weight; logf ~level:`info "  ]";
             ProcMap.add (p_entry,p_exit) base_case_weight bc_map)
           ProcMap.empty 
           scc.procs in 
 
-        let simple_height = make_variable (if !chora_dual then "RB" else "H") in 
+        let simple_height = make_aux_variable (if !chora_dual then "RB" else "H") in 
         let (height_model, excepting) = 
           if !chora_dual then 
-            let rm = make_variable "RM" in 
-            let mb = make_variable "MB" in 
+            let rm = make_aux_variable "RM" in 
+            let mb = make_aux_variable "MB" in 
             (* When we perform dual-height analysis, we make two copies each (one "lower",
                one "upper") of most of the symbols in our vocabulary, but there
                are some exceptions, i.e., symbols that should not be copied.  The variable
@@ -2965,7 +3036,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           (fun (p_entry,p_exit) info_structure ->
             let call_abstraction_weight = 
               of_transition_formula info_structure.tr_symbols info_structure.call_abstraction_fmla in
-            logf ~level:`info "  call_abstration%t = [" (proc_name_triple p_entry p_exit); 
+            logf ~level:`info "  call_abstration%s = [" (proc_name_triple_string (p_entry,p_exit)); 
             print_indented 15 call_abstraction_weight; logf ~level:`info "  ]";
             call_abstraction_weight)
           bounds_map in
@@ -2985,7 +3056,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             logf ~level:`info "  ]";*)
             let (rec_pe,nonrec_pe) = ProcMap.find (p_entry,p_exit) split_expr_map in
             let recursive_weight_nobc = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_rec) rec_pe) in
-            logf ~level:`info "  recursive_weight-BC%t = [" (proc_name_triple p_entry p_exit);
+            logf ~level:`info "  recursive_weight-BC%s = [" (proc_name_triple_string (p_entry,p_exit));
             print_indented 15 recursive_weight_nobc;
             logf ~level:`info "  ]"; 
             (*ProcMap.add (p_entry,p_exit) recursive_weight_nobc rw_map;*)
@@ -3022,7 +3093,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
                 let post_sym = post_symbol pre_sym in 
                 (pre_sym,post_sym) ) program_vars in 
             let summary_weight = of_transition_formula final_tr_symbols summary_fmla in 
-            log_tr_proc "@.    Final_summary%t = " p_entry p_exit summary_weight;
+            log_tr_proc "@.    Final_summary%s = " p_entry p_exit summary_weight;
             (p_entry,p_exit,summary_weight))
           summary_fmla_list in 
 
