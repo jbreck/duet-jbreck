@@ -63,12 +63,12 @@ module ProcModuleC = struct
   module ProcMap = IntPairMap
 
   let proc_name_triple_string (entry,exit) = 
-    if ProcMap.mem (entry,exit) !procedure_names_map then 
-      let name = ProcMap.find (entry,exit) !procedure_names_map in
+    if IntPairMap.mem (entry,exit) !procedure_names_map then 
+      let name = IntPairMap.find (entry,exit) !procedure_names_map in
       Format.sprintf "(%d,%d,\"%s\")" entry exit name
     else
       Format.sprintf "(%d,%d,?)" entry exit
-  
+
   let proc_name_string (entry,exit) = 
     if ProcMap.mem (entry,exit) !procedure_names_map then 
       let name = ProcMap.find (entry,exit) !procedure_names_map in
@@ -79,7 +79,24 @@ end
 
 module ChoraC = ChoraCore.MakeChoraCore(ProcModuleC)(AuxVarModuleC)
 
-open ChoraC
+open AuxVarModuleC
+open ProcModuleC
+
+(* The following flags are used inside ChoraCore, I think *)
+(* let chora_dual = ChoraC.chora_dual*)
+(* let chora_debug_recs = ChoraC.chora_debug_recs *)
+(* let chora_fallback = ChoraC.chora_fallback *)
+
+(* The following flags aren't used inside ChoraCore *)
+let chora_use_wedgecover = ref false
+(*let chora_print_depth_bound_wedges = ref false*)
+let chora_print_summaries = ref false
+let chora_print_wedges = ref false
+let chora_debug_squeeze = ref false
+let chora_squeeze_sb = ref true (* on by default, now *)
+let chora_squeeze_wedge = ref false
+let chora_squeeze_conjoin = ref false
+let chora_linspec = ref true
 
 (* ugly: copied from newtonDomain just for debugging *)
 let print_indented ?(level=`info) indent k =
@@ -451,7 +468,6 @@ end
 (*             preamble               *)
 
 module type Weight = WeightedGraph.Weight
-(*module M = BatMap.Make(IntPair)*)
 module M = WeightedGraph.M
 
 module U = Graph.Persistent.Digraph.ConcreteBidirectional(SrkUtil.Int)
@@ -471,7 +487,6 @@ let project = K.exists Cra.V.is_global
 module MakeBottomUpRecGraph (W : Weight) = struct
   open WeightedGraph
 
-  (*include WeightedGraph.MakeRecGraph(W)*)
   module CallSet = BatSet.Make(IntPair)
   module VertexSet = SrkUtil.Int.Set
 
@@ -867,8 +882,6 @@ let increment_variable value =
       srk
       [(Srk.Syntax.mk_const srk (Cra.V.symbol_of value));
        (Srk.Syntax.mk_real srk (Srk.QQ.of_int 1))])
-
-(* ZZZ *)
 
 let top_down_formula_to_wedge top_down_formula sym = 
   let projection x =
@@ -1690,9 +1703,9 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           ProcMap.empty 
           scc.procs in 
 
-        let simple_height = make_aux_variable (if !chora_dual then "RB" else "H") in 
+        let simple_height = make_aux_variable (if !ChoraC.chora_dual then "RB" else "H") in 
         let (height_model, excepting) = 
-          if !chora_dual then 
+          if !ChoraC.chora_dual then 
             let rm = make_aux_variable "RM" in 
             let mb = make_aux_variable "MB" in 
             (* When we perform dual-height analysis, we make two copies each (one "lower",
@@ -1705,9 +1718,9 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
                 Srk.Syntax.Symbol.Set.add (post_symbol sym) excepting)
               Srk.Syntax.Symbol.Set.empty
               (simple_height.value::rm.value::mb.value::program_vars) in 
-            (RB_RM_MB (simple_height (* that is, rb *), rm, mb), excepting)
+            (ChoraC.RB_RM_MB (simple_height (* that is, rb *), rm, mb), excepting)
           else 
-            (RB (simple_height), Srk.Syntax.Symbol.Set.empty) in 
+            (ChoraC.RB (simple_height), Srk.Syntax.Symbol.Set.empty) in 
 
         logf ~level:`info "  Beginning top-down analysis"; 
         (*   ***   Compute top-down summaries for each procedure   ***   *)
@@ -1720,10 +1733,10 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
         let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
             let base_case_weight = ProcMap.find (p_entry,p_exit) base_case_map in 
-            (*let bounds = make_call_abstraction base_case_weight scc_global_footprint in *)
+            (*let bounds = ChoraC.make_call_abstraction base_case_weight scc_global_footprint in *)
             let (tr_symbols, base_case_fmla) = 
                 to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
-            let bounds = make_call_abstraction base_case_fmla tr_symbols in 
+            let bounds = ChoraC.make_call_abstraction base_case_fmla tr_symbols in 
             ProcMap.add (p_entry,p_exit) bounds b_map)
           ProcMap.empty 
           scc.procs in 
@@ -1731,7 +1744,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         let call_abstraction_weight_map = ProcMap.mapi
           (fun (p_entry,p_exit) info_structure ->
             let call_abstraction_weight = 
-              of_transition_formula info_structure.tr_symbols info_structure.call_abstraction_fmla in
+              of_transition_formula info_structure.ChoraC.tr_symbols info_structure.call_abstraction_fmla in
             logf ~level:`info "  call_abstration%s = [" (proc_name_triple_string (p_entry,p_exit)); 
             print_indented 15 call_abstraction_weight; logf ~level:`info "  ]";
             call_abstraction_weight)
@@ -1769,13 +1782,13 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
           scc.procs in 
 
         (*let summary_list = 
-          make_height_based_summaries
+          ChoraC.make_height_based_summaries
             rec_fmla_map bounds_map program_vars top_down_formula_map scc height_model in*)
 
         let proc_key_list = List.map (fun (p_entry,p_exit,pathexpr) -> (p_entry,p_exit)) scc.procs in
          
         let summary_fmla_list = 
-          make_height_based_summaries
+          ChoraC.make_height_based_summaries
             rec_fmla_map bounds_map top_down_formula_map proc_key_list height_model excepting in
 
         let summary_list = List.map (fun (proc_key,summary_fmla) ->
@@ -1850,7 +1863,7 @@ let _ =
      " Print 'squeezed' depth bound formula");
   CmdLine.register_config
     ("-chora-debug-recs",
-     Arg.Set chora_debug_recs,
+     Arg.Set ChoraC.chora_debug_recs,
      " Print information about recurrences for non-linear recursion");
   (*CmdLine.register_config
     ("-chora-squeeze-sb",
@@ -1875,10 +1888,10 @@ let _ =
      " Disable the special-case handling of linear recursion");
   CmdLine.register_config
     ("-chora-dual",
-     Arg.Set chora_dual,
+     Arg.Set ChoraC.chora_dual,
      " Compute non-trivial lower bounds in addition to upper bounds"); (* "dual-height" analysis *)
   CmdLine.register_config
     ("-chora-full",
-     Arg.Unit (fun () -> chora_dual := true; chora_fallback := true),
+     Arg.Unit (fun () -> ChoraC.chora_dual := true; ChoraC.chora_fallback := true),
      " Include a 'fallback' to height-based analysis in chora dual analysis");
 

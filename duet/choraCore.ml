@@ -4,7 +4,7 @@ include Log.Make(struct let name = "chora" end)
 
 module type AuxVarModule = sig
   type val_t (* type of an auxiliary variable *)
-         (*   e.g., a Cra.value *)
+             (*   e.g., a Cra.value; but, unit is also okay *)
   type val_sym = { 
       value: val_t; 
       symbol: Srk.Syntax.symbol
@@ -36,19 +36,9 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
     (*   where the midline is defined as the depth of the shallowest leaf *)
     | RB_RM_MB of val_sym * val_sym * val_sym 
 
-  open BatPervasives (* Gives you the "--" operator, maybe *)
+  open BatPervasives (* Gives you the "--" operator, maybe among other things *)
 
-  let chora_print_summaries = ref false
-  let chora_print_wedges = ref false
-  let chora_use_wedgecover = ref false
-  (*let chora_print_depth_bound_wedges = ref false*)
-  let chora_debug_squeeze = ref false
   let chora_debug_recs = ref false
-  (*let chora_squeeze_sb = ref false*)
-  let chora_squeeze_sb = ref true (* on by default, now *)
-  let chora_squeeze_wedge = ref false
-  let chora_squeeze_conjoin = ref false
-  let chora_linspec = ref true
   let chora_dual = ref false (* compute non-trivial lower bounds in addition to upper bounds *)
   let chora_fallback = ref false
   let chora_just_allow_decrease = ref false (* WARNING: it's unsound to set this to true *)
@@ -83,9 +73,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
     call_abstraction_fmla : 'a Srk.Syntax.formula
   }
 
-  (*let make_call_abstraction base_case_weight scc_global_footprint = 
-    let (tr_symbols, body) = 
-        to_transition_formula_with_unmodified base_case_weight scc_global_footprint in*)
   let make_call_abstraction base_case_fmla tr_symbols = 
     let param_prime = Str.regexp "param[0-9]+'" in
     let projection x = 
@@ -135,11 +122,8 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
       | (`Geq, vec) ->
         add_bounding_var vec true in 
     List.iter handle_constraint (Wedge.polyhedron wedge);
-    (*let rec_flag_var_sym_pair = make_aux_variable "Recursion_Flag" in
-    let rec_flag_var = Core.Var.mk (Core.Varinfo.mk_global "Recursion_Flag" ( Core.Concrete (Core.Int 32))) in 
-      let rec_flag_val = Cra.VVal rec_flag_var in 
-      let _ = Cra.V.symbol_of rec_flag_val in (* Add to symbol table... (HACK!) *)
-    let set_rec_flag = assign_value_to_literal rec_flag_var_sym_pair.value 1 in *)
+    (*let rec_flag_var_sym_pair = make_aux_variable "Recursion_Flag" in *)
+    (*let set_rec_flag = assign_value_to_literal rec_flag_var_sym_pair.value 1 in *)
     let call_abstraction_fmla = Srk.Syntax.mk_and srk (!bounding_atoms) in 
     (*let call_abstraction_weight = of_transition_formula tr_symbols call_abstraction_fmla in*)
       {bound_pairs = !bound_list;
@@ -153,7 +137,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
     ineq_tr: (Srk.Syntax.Symbol.Map.key * Srk.Syntax.Symbol.Map.key) list;
     blk_transforms: Srk.QQ.t array array list;
     blk_adds: Srk.Polynomial.QQXs.t array list;
-    (*rev_term_of_id: ((Cra.Ctx.t, 'a) Srk.Syntax.expr) list;*)
     term_of_id: ((srk_ctx_magic, 'a) Srk.Syntax.expr) BatDynArray.t;
     n_recs_accepted: int;
     n_recs_specified: int
@@ -162,7 +145,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   type recurrence_candidate = {
     outer_sym: Srk.Syntax.symbol;
     inner_sym: Srk.Syntax.symbol;
-    (*coeff: Srk.QQ.t;*)
     sub_cs: srk_ctx_magic Srk.CoordinateSystem.t;
     inequation: (Srk.QQ.t * int) list;
     dependencies: Srk.Syntax.symbol list (* what other same-stratum symbols does this depend on? *)
@@ -179,7 +161,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
      ineq_tr = (candidate.inner_sym, candidate.outer_sym)::recurrences.ineq_tr;
      blk_transforms = recurrences.blk_transforms;
      blk_adds = recurrences.blk_adds;
-     (*rev_term_of_id = (Srk.Syntax.mk_const srk candidate.inner_sym)::recurrences.rev_term_of_id;*)
      term_of_id = recurrences.term_of_id;
      n_recs_accepted = recurrences.n_recs_accepted + 1;
      n_recs_specified = recurrences.n_recs_specified}
@@ -201,7 +182,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
      blk_transforms = [];
      blk_adds = [];
      term_of_id = BatDynArray.create ();
-     (*rev_term_of_id = [];*)
      n_recs_accepted = 0;
      n_recs_specified = 0}
   
@@ -358,19 +338,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
                                  bounding_conjunction] in
     log_fmla_proc "@.    HBA_summary_fmla%s: %a" proc_key height_based_summary_fmla; 
     height_based_summary_fmla
-    (*
-      (* Produce the final summary from this conjunction formula *)
-      (*     FIXME: I should really be iterating over the SCC footprint variables,
-                    not over the list of all program variables. *)
-      let final_tr_symbols = 
-        List.map (fun var -> 
-          let pre_sym = Cra.V.symbol_of var in 
-          let post_sym = post_symbol pre_sym in 
-          (pre_sym,post_sym)) program_vars in 
-      let height_based_summary = of_transition_formula final_tr_symbols height_based_summary_fmla in 
-      log_tr_proc "@.    HBA_summary%t = " proc_key height_based_summary;
-      height_based_summary
-    *)
   
   let substitute_one_sym formula old_sym new_sym =  
     let subst_rule sym = 
@@ -491,19 +458,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
       (first_part @ fallback @ last_part) in
     log_fmla_proc "@.    DHA conj%s: %a" proc_key dual_height_summary_fmla; 
     dual_height_summary_fmla
-    (*
-      (* Produce the final summary from this conjunction formula *)
-      (*     FIXME: I should really be iterating over the SCC footprint variables,
-                    not over the list of all program variables. *)
-      let final_tr_symbols = 
-        List.map (fun var -> 
-          let pre_sym = Cra.V.symbol_of var in 
-          let post_sym = post_symbol pre_sym in 
-          (pre_sym,post_sym) ) program_vars in 
-      let dual_height_summary = of_transition_formula final_tr_symbols dual_height_summary_fmla in 
-      log_tr_proc "@.    DHA_summary%t = " proc_key dual_height_summary;
-      dual_height_summary
-    *)
   
   let sanity_check_recurrences recurrences term_of_id = 
     (if not ((List.length recurrences.blk_transforms) ==
@@ -511,8 +465,6 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
        failwith "Matrix recurrence transform/add blocks mismatched.");
     let print_expr i term = 
         logf ~level:`trace "  term_of_id[%d]=%a" i (Srk.Syntax.Expr.pp srk) term in
-    (*let pp_dim f i = 
-        Format.asprintf "%a" (Srk.Syntax.Expr.pp srk) (term_of_id.(i)) in*)
     let pp_dim f i = 
         Format.fprintf f "%a" (Srk.Syntax.Expr.pp srk) (term_of_id.(i)) in
     Array.iteri print_expr term_of_id;
@@ -1097,6 +1049,8 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
     (* *********************************************************************** *)
     (* ********                Height-based Analysis                  ******** *)
     | RB rb -> 
+      begin
+      assert (not !chora_dual);
       (* ---------- Extract and solve recurrences --------- *)
       let solution = build_wedges_and_extract_recurrences 
         b_out_definitions_map b_in_b_out_map b_out_symbols 
@@ -1114,10 +1068,12 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
         []
         proc_key_list in 
       summary_list
+      end
     (* *********************************************************************** *)
     (* ********                 Dual-height Analysis                  ******** *)
     | RB_RM_MB (rb, rm, mb) -> 
       begin 
+      assert (!chora_dual);
       (* ---------- Extract and solve recurrences --------- *)
       let rm_solution = build_wedges_and_extract_recurrences 
         b_out_definitions_map b_in_b_out_map b_out_symbols 
