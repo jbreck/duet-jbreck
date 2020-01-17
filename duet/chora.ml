@@ -1741,17 +1741,17 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
                 to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
             let param_prime = Str.regexp "param[0-9]+'" in
             let hs_projection x = 
-              (
-              let symbol_name = Srk.Syntax.show_symbol srk x in 
+              (let symbol_name = Srk.Syntax.show_symbol srk x in 
               let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
               if this_name_is_a_param_prime then 
-                  ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
+                ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
               else
-              ( 
-                (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
-                || 
-                is_var_global x
-              ))
+                ((List.fold_left 
+                    (fun found (vpre,vpost) -> found || vpre == x || vpost == x) 
+                    false tr_symbols)
+                  || 
+                  is_var_global x
+                ))
             in 
             let bounds = ChoraC.make_hypothetical_summary base_case_fmla tr_symbols hs_projection in 
             ProcMap.add (p_entry,p_exit) bounds b_map)
