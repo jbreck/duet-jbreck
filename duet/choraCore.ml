@@ -11,8 +11,6 @@ module type AuxVarModule = sig
   }
   val make_aux_variable : string -> val_sym
 
-  val is_var_global : Srk.Syntax.symbol -> bool (* probably not really needed *)
-
   val post_symbol : Srk.Syntax.symbol -> Srk.Syntax.symbol
 
   type srk_ctx_magic
@@ -74,21 +72,7 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   }
 
   (* This function is one of the main entrypoints of choraCore *)
-  let make_hypothetical_summary base_case_fmla tr_symbols = 
-    let param_prime = Str.regexp "param[0-9]+'" in
-    let projection x = 
-      (
-      let symbol_name = Srk.Syntax.show_symbol srk x in 
-      let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
-      if this_name_is_a_param_prime then 
-          ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
-      else
-      ( 
-        (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
-        || 
-        is_var_global x
-      ))
-    in 
+  let make_hypothetical_summary base_case_fmla tr_symbols projection = 
     let wedge = Wedge.abstract ~exists:projection srk base_case_fmla in 
     logf ~level:`info "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
     let cs = Wedge.coordinate_system wedge in 

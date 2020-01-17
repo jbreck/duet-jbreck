@@ -32,6 +32,7 @@ module AuxVarModuleC = struct
       value: Cra.value; 
       symbol: Srk.Syntax.symbol
   }
+
   let make_aux_variable name = 
     let new_var = Core.Var.mk (Core.Varinfo.mk_global name (Core.Concrete (Core.Int 32))) in 
     let new_var_val = Cra.VVal new_var in 
@@ -1738,7 +1739,21 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             (*let bounds = ChoraC.make_hypothetical_summary base_case_weight scc_global_footprint in *)
             let (tr_symbols, base_case_fmla) = 
                 to_transition_formula_with_unmodified base_case_weight scc_global_footprint in
-            let bounds = ChoraC.make_hypothetical_summary base_case_fmla tr_symbols in 
+            let param_prime = Str.regexp "param[0-9]+'" in
+            let hs_projection x = 
+              (
+              let symbol_name = Srk.Syntax.show_symbol srk x in 
+              let this_name_is_a_param_prime = Str.string_match param_prime symbol_name 0 in
+              if this_name_is_a_param_prime then 
+                  ((*Format.printf "Rejected primed param symbol %s" symbol_name;*) false)
+              else
+              ( 
+                (List.fold_left (fun found (vpre,vpost) -> found || vpre == x || vpost == x) false tr_symbols)
+                || 
+                is_var_global x
+              ))
+            in 
+            let bounds = ChoraC.make_hypothetical_summary base_case_fmla tr_symbols hs_projection in 
             ProcMap.add (p_entry,p_exit) bounds b_map)
           ProcMap.empty 
           scc.procs in 
