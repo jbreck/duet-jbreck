@@ -19,8 +19,8 @@ end;;
 
 module type ProcModule = sig
   module ProcMap : BatMap.S
-  val proc_name_triple_string : ProcMap.key -> string
   val proc_name_string : ProcMap.key -> string
+  (*val proc_name_string : ProcMap.key -> string*)
 end;;
 
 module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
@@ -42,7 +42,7 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   let chora_just_allow_decrease = ref false (* WARNING: it's unsound to set this to true *)
 
   let log_fmla_proc ?(level=`info) formatter proc_key formula = 
-    logf ~level formatter (proc_name_triple_string proc_key)
+    logf ~level formatter (proc_name_string proc_key)
         (Srk.Syntax.Formula.pp srk) formula
 
   let upper_symbol =
@@ -67,12 +67,12 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
     bound_pairs : (Srk.Syntax.symbol * 'a Srk.Syntax.term) list;
     (*recursion_flag : Cra.value;*)
     (*call_abstraction_weight : K.t;*)
-    tr_symbols : (Srk.Syntax.symbol * Srk.Syntax.symbol) list;
+    (*tr_symbols : (Srk.Syntax.symbol * Srk.Syntax.symbol) list;*)
     call_abstraction_fmla : 'a Srk.Syntax.formula
   }
 
   (* This function is one of the main entrypoints of choraCore *)
-  let make_hypothetical_summary base_case_fmla tr_symbols projection = 
+  let make_hypothetical_summary base_case_fmla projection = 
     let wedge = Wedge.abstract ~exists:projection srk base_case_fmla in 
     logf ~level:`info "\n  base_case_wedge = %t \n\n" (fun f -> Wedge.pp f wedge);
     let cs = Wedge.coordinate_system wedge in 
@@ -114,7 +114,7 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
       {bound_pairs = !bound_list;
        (*recursion_flag = rec_flag_var_sym_pair.value;*)
        (*call_abstraction_weight = K.mul set_rec_flag call_abstraction_weight *)(*}*)
-       tr_symbols = tr_symbols;
+       (*tr_symbols = tr_symbols;*)
        call_abstraction_fmla = call_abstraction_fmla}
 
   type 'a recurrence_collection = {

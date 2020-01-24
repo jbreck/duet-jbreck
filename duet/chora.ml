@@ -63,19 +63,19 @@ let procedure_names_map = ref IntPairMap.empty
 module ProcModuleC = struct
   module ProcMap = IntPairMap
 
-  let proc_name_triple_string (entry,exit) = 
+  let proc_name_string (entry,exit) = 
     if IntPairMap.mem (entry,exit) !procedure_names_map then 
       let name = IntPairMap.find (entry,exit) !procedure_names_map in
       Format.sprintf "(%d,%d,\"%s\")" entry exit name
     else
       Format.sprintf "(%d,%d,?)" entry exit
 
-  let proc_name_string (entry,exit) = 
+  (*let proc_name_string (entry,exit) = 
     if ProcMap.mem (entry,exit) !procedure_names_map then 
       let name = ProcMap.find (entry,exit) !procedure_names_map in
       Format.sprintf "%s" name
     else
-      Format.sprintf "<unknown procedure(%d,%d)>" entry exit
+      Format.sprintf "<unknown procedure(%d,%d)>" entry exit*)
 end
 
 module ChoraC = ChoraCore.MakeChoraCore(ProcModuleC)(AuxVarModuleC)
@@ -110,7 +110,7 @@ let print_indented ?(level=`info) indent k =
       Format.pp_close_box formatter ()) k)) ()
 
 let log_tr_proc ?(level=`info) formatter p_entry p_exit tr = 
-  logf ~level formatter (proc_name_triple_string (p_entry,p_exit));
+  logf ~level formatter (proc_name_string (p_entry,p_exit));
   print_indented 17 tr;
   logf ~level "@."
 
@@ -1040,16 +1040,16 @@ let make_depth_bound_weight_multi procs (ts : K.t Cra.label Cra.WG.t)
         let td_summary = K.mul set_height_zero cycles in
         let td_summary = K.mul td_summary assume_height_non_negative in
         let td_summary = project td_summary in (* FIXME Not sure this is needed *)
-        logf ~level:`info "  multi_phi_td%s = [" (proc_name_triple_string (p_entry,p_exit));
+        logf ~level:`info "  multi_phi_td%s = [" (proc_name_string (p_entry,p_exit));
         print_indented 15 td_summary; logf ~level:`info "  ]\n";
         (*(if !chora_print_depth_bound_wedges then
         begin
-          logf ~level:`always "  wedge[phi_td%t] is [" (proc_name_triple_string (p_entry,p_exit));
+          logf ~level:`always "  wedge[phi_td%t] is [" (proc_name_string (p_entry,p_exit));
           debug_print_depth_wedge td_summary;
           logf ~level:`always "  ]";
         end);*)
         let _, depth_bound_formula = to_transition_formula td_summary in
-        logf ~level:`info "@.  dbf%s: %a" (proc_name_triple_string (p_entry,p_exit))
+        logf ~level:`info "@.  dbf%s: %a" (proc_name_string (p_entry,p_exit))
             (Srk.Syntax.Formula.pp srk) depth_bound_formula;
         let post_height_sym = post_symbol height.symbol in
         let post_height_gt_zero = Syntax.mk_lt srk 
@@ -1683,7 +1683,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         logf ~level:`info "]@.";
 
         List.iter (fun (u,v,p) -> 
-            (logf ~level:`info "  Proc%s = %t" (proc_name_triple_string (u,v)) (fun f -> NPathexpr.pp f p))) scc.procs;
+            (logf ~level:`info "  Proc%s = %t" (proc_name_string (u,v)) (fun f -> NPathexpr.pp f p))) scc.procs;
         let split_expr_map = List.fold_left (fun se_map (p_entry,p_exit,pathexpr) ->
             let edge s t = NPathexpr.mk_edge context s t in
             let pe_algebra = BURG.pathexp_algebra context in 
@@ -1700,7 +1700,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             let (rec_pe,nonrec_pe) = ProcMap.find (p_entry,p_exit) split_expr_map in
             (*let base_case_weight = project (path_weight_internal p_entry p_exit weight_of_call_zero) in*)
             let base_case_weight = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_zero) nonrec_pe) in
-            logf ~level:`info "  base_case%s = [" (proc_name_triple_string (p_entry,p_exit)); 
+            logf ~level:`info "  base_case%s = [" (proc_name_string (p_entry,p_exit)); 
               print_indented 15 base_case_weight; logf ~level:`info "  ]";
             ProcMap.add (p_entry,p_exit) base_case_weight bc_map)
           ProcMap.empty 
@@ -1734,7 +1734,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
         logf ~level:`info "  Finished depth-bound analysis"; 
 
         (*   ***   Compute the abstraction that we will use for a call to each procedure  ***   *)
-        let bounds_map = List.fold_left (fun b_map (p_entry,p_exit,pathexpr) ->
+        let (bounds_map,tr_symbols_map) = List.fold_left (fun (b_map,tr_map) (p_entry,p_exit,pathexpr) ->
             let base_case_weight = ProcMap.find (p_entry,p_exit) base_case_map in 
             (*let bounds = ChoraC.make_hypothetical_summary base_case_weight scc_global_footprint in *)
             let (tr_symbols, base_case_fmla) = 
@@ -1753,16 +1753,18 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
                   is_var_global x
                 ))
             in 
-            let bounds = ChoraC.make_hypothetical_summary base_case_fmla tr_symbols hs_projection in 
-            ProcMap.add (p_entry,p_exit) bounds b_map)
-          ProcMap.empty 
+            let bounds = ChoraC.make_hypothetical_summary base_case_fmla hs_projection in 
+            (ProcMap.add (p_entry,p_exit) bounds b_map,
+             ProcMap.add (p_entry,p_exit) tr_symbols tr_map))
+          (ProcMap.empty, ProcMap.empty)
           scc.procs in 
         (* Construct the recursive-case weight using the formula computed by make_hypothetical_summary *)
         let call_abstraction_weight_map = ProcMap.mapi
           (fun (p_entry,p_exit) info_structure ->
+            let tr_symbols = ProcMap.find (p_entry,p_exit) tr_symbols_map in 
             let call_abstraction_weight = 
-              of_transition_formula info_structure.ChoraC.tr_symbols info_structure.call_abstraction_fmla in
-            logf ~level:`info "  call_abstration%s = [" (proc_name_triple_string (p_entry,p_exit)); 
+              of_transition_formula tr_symbols info_structure.ChoraC.call_abstraction_fmla in
+            logf ~level:`info "  call_abstration%s = [" (proc_name_string (p_entry,p_exit)); 
             print_indented 15 call_abstraction_weight; logf ~level:`info "  ]";
             call_abstraction_weight)
           bounds_map in
@@ -1782,7 +1784,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             logf ~level:`info "  ]";*)
             let (rec_pe,nonrec_pe) = ProcMap.find (p_entry,p_exit) split_expr_map in
             let recursive_weight_nobc = project (NPathexpr.eval (edge_weight_with_calls weight_of_call_rec) rec_pe) in
-            logf ~level:`info "  recursive_weight-BC%s = [" (proc_name_triple_string (p_entry,p_exit));
+            logf ~level:`info "  recursive_weight-BC%s = [" (proc_name_string (p_entry,p_exit));
             print_indented 15 recursive_weight_nobc;
             logf ~level:`info "  ]"; 
             (*ProcMap.add (p_entry,p_exit) recursive_weight_nobc rw_map;*)
@@ -1792,7 +1794,7 @@ let build_summarizer (ts : K.t Cra.label Cra.WG.t) =
             let eventually_recursion = (assume_value_eq_literal bounds.recursion_flag 1) in 
             let recursive_weight_nobc = 
               K.mul (K.mul initially_no_recursion recursive_weight) eventually_recursion in*)*)
-            let (tr_symbols, rec_fmla) = to_transition_formula recursive_weight_nobc in
+            let (_, rec_fmla) = to_transition_formula recursive_weight_nobc in
             logf ~level:`trace "  rec_case_formula_body: @.%a@." (Srk.Syntax.Formula.pp srk) rec_fmla;
             ProcMap.add (p_entry,p_exit) rec_fmla rf_map)
           ProcMap.empty 
