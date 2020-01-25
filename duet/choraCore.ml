@@ -897,7 +897,7 @@ module MakeChoraCore (Proc:ProcModule)(Aux:AuxVarModule) = struct
   let make_extraction_wedges_from_formula
       extraction_formula bounds b_in_b_out_map b_out_symbols wedge_map = 
     (* NOTE: bounding symbols need to have been analyzed for all procedures in the SCC by this point *)
-    logf ~level:`info "   Not using extraction_wedge; using formula instead"; 
+    (*logf ~level:`info "   Not using extraction_wedge; using formula instead"; *)
     (* For each outer bounding symbol (B_out), project the wedge down to that outer
          symbol and all inner bounding symbols *)
     logf ~level:`trace "  Building a wedge map..."; 
