@@ -12,6 +12,7 @@ module K = NewtonDomain.K
 module KK = NewtonDomain.KK
 
 module Ctx = NewtonDomain.Ctx
+module Pctx = Syntax.MakeContext ()  (* parsing context, for reachc code *)
 
 module Var = Cra.V
 module VarSet = BatSet.Make(Cra.V)
@@ -33,13 +34,23 @@ module AuxVarModuleC = struct
       symbol: Srk.Syntax.symbol
   }
 
-  let make_aux_variable name = 
+  let make_aux_global_variable name = 
     let new_var = Core.Var.mk (Core.Varinfo.mk_global name (Core.Concrete (Core.Int 32))) in 
     let new_var_val = Cra.VVal new_var in 
     (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
     let new_var_sym = Cra.V.symbol_of new_var_val in 
     {value  = new_var_val;
      symbol = new_var_sym}
+  
+  let make_aux_local_variable name = 
+    let new_var = Core.Var.mk (Core.Varinfo.mk_local name (Core.Concrete (Core.Int 32))) in 
+    let new_var_val = Cra.VVal new_var in 
+    (* NOTE: in the following line, the function symbol_of puts a symbol into the hash table *)
+    let new_var_sym = Cra.V.symbol_of new_var_val in 
+    {value  = new_var_val;
+     symbol = new_var_sym}
+
+  let make_aux_variable = make_aux_global_variable
 
   let is_var_global x = 
     match Cra.V.of_symbol x with 
@@ -57,6 +68,10 @@ module AuxVarModuleC = struct
   let srk = Cra.srk
 
 end
+
+let make_aux_procedure srk int_arity name = 
+  Srk.Syntax.mk_symbol srk ~name 
+    (`TyFun (List.init int_arity (fun n -> `TyInt), `TyBool))
 
 let procedure_names_map = ref IntPairMap.empty
 
@@ -98,6 +113,10 @@ let chora_squeeze_sb = ref true (* on by default, now *)
 let chora_squeeze_wedge = ref false
 let chora_squeeze_conjoin = ref false
 let chora_linspec = ref true
+
+let substitution_optimization = ref true  (* for reachc code *)
+let reachc_retry_flag = ref true
+let reachc_share_locals = ref true
 
 (* ugly: copied from newtonDomain just for debugging *)
 let print_indented ?(level=`info) indent k =
@@ -431,9 +450,9 @@ module IcraPathExpr = struct
     | IDetensor (uChild,tChild) -> mk_detensor ctx (subst ctx s x uChild) (substT ctx s x tChild)
     | IProject (child) -> mk_project ctx (subst ctx s x child)
     | IVar v -> 
-        let (xa,xb) = x in 
+        (*let (xa,xb) = x in 
         let (va,vb) = v in 
-        Printf.printf " Subst checking (%d,%d) against (%d,%d)\n" xa xb va vb;
+        Printf.printf " Subst checking (%d,%d) against (%d,%d)\n" xa xb va vb;*)
         if (x = v) then s else ehc
     | IConstantEdge (vs,vt) -> ehc
     | IAdd (lChild, rChild) -> mk_add ctx (subst ctx s x lChild) (subst ctx s x rChild)
@@ -1138,17 +1157,20 @@ let get_procedure_summary query rg procedure =
   let exit = (RG.block_exit rg procedure).did in
   BURG.path_weight query entry exit
 
-let print_procedure_summary procedure summary = 
+let print_procedure_summary_internal summary pp_fun pp_arg = 
   let level = if !chora_print_summaries then `always else `info in
   logf ~level:level "---------------------------------";
-  logf ~level:level " -- Procedure summary for %a = " Varinfo.pp procedure;
+  logf ~level:level " -- Procedure summary for %a = " pp_fun pp_arg;
   print_indented ~level:level 0 summary;
   logf ~level:level "";
   if !chora_print_wedges then 
     (let level = if !chora_print_wedges then `always else `info in
-     logf ~level:level " -- Procedure summary wedge for %a = @." Varinfo.pp procedure;
+     logf ~level:level " -- Procedure summary wedge for %a = @." pp_fun pp_arg;
      debug_print_wedge_of_transition summary)
   else ()
+
+let print_procedure_summary procedure summary = 
+  print_procedure_summary_internal summary Varinfo.pp procedure
 
 let resource_bound_analysis rg query =
   let cost_opt =
@@ -1275,10 +1297,9 @@ let resource_bound_analysis rg query =
           (*Format.printf "---------------------------------\n"*) )
     end
 
-let check_assertions rg query main assertions = 
+let check_assertions query entry_main assertions = 
     if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
     logf ~level:`always "======= Assertion Checking ======";
-    let entry_main = (RG.block_entry rg main).did in
     assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
         let path = BURG.path_weight query entry_main v in
         let sigma sym =
@@ -1332,7 +1353,7 @@ let find_recursive_calls (ts : K.t Cra.label Cra.WG.t) pathexpr (scc:BURG.scc) =
     | `Zero | `One -> IntPairSet.empty
   in
   let scc_call_edges = NPathexpr.eval pe_call_edge_set pathexpr in 
-  logf ~level:`info "  calls = [ ";
+  logf ~level:`info "  call edges = [ ";
   IntPairSet.iter (fun (s,t) -> logf ~level:`info "(%d,%d) " s t) scc_call_edges;
   logf ~level:`info "]\n";
   scc_call_edges
@@ -1440,14 +1461,14 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
   logf ~level:`info " Beginning Gauss-Jordan elimination."; 
   logf ~level:`info " Original equation system: @."; 
     IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
-       logf ~level:`info " (%d,%d) := %a @." 
-      p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
+       logf ~level:`info " %s := %a @." 
+      (proc_name_string (p_entry'',p_exit'')) IcraPathExpr.pp (ipathexpr))
     icrapathexpr_equation_system;
   let transformed_ipathexpr_equation_system = 
       IntPairMap.fold (fun (p_entry, p_exit) _ eqs -> 
         let old_rhs = IcraPathExpr.mk_project ctx (* project is needed *)
           (IntPairMap.find (p_entry, p_exit) eqs) in
-        logf ~level:`info " Acting on (%d,%d): @." p_entry p_exit; 
+        logf ~level:`info " Acting on %s: @." (proc_name_string (p_entry,p_exit)); 
         let var = (p_entry,p_exit) in
         (* First, call Factor_{var} and then produce rhs' = U |>< (T)* *)
         let rhs' = IcraPathExpr.isolate ctx var old_rhs in
@@ -1461,16 +1482,16 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
           in
           logf ~level:`info " After one substitution pass: @."; 
             IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
-                logf ~level:`info " (%d,%d) := %a @." 
-                p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
+                logf ~level:`info " %s := %a @." 
+                (proc_name_string (p_entry'',p_exit'')) IcraPathExpr.pp (ipathexpr))
               substituted_eqs;
           substituted_eqs)
         icrapathexpr_equation_system 
         icrapathexpr_equation_system in
   logf ~level:`info " Transformed equation system: @."; 
     IntPairMap.iter (fun (p_entry'',p_exit'') ipathexpr -> 
-      logf ~level:`info " (%d,%d) := %a @." 
-      p_entry'' p_exit'' IcraPathExpr.pp (ipathexpr))
+      logf ~level:`info " %s := %a @." 
+      (proc_name_string (p_entry'',p_exit'')) IcraPathExpr.pp (ipathexpr))
     transformed_ipathexpr_equation_system;
   let () = IntPairMap.iter (fun (p_entry, p_exit) ipathexpr -> 
              assert (is_constant_ipathexpr ipathexpr))
@@ -1494,6 +1515,7 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
       | `IProjectT x -> KK.project x
       | `IMulT (x, y) -> KK.mul x y
       | `IAddT (x, y) -> KK.add x y
+      (*| `IStarT x -> (logf ~level:`info "    -Beginning tensored star"; logf ~level:`info "    -Its body is: %a" KK.pp x; let t = KK.star x in logf ~level:`info "    -The tensor-starred result is: %a" KK.pp t; logf ~level:`info "      -Ending tensored star"; t)*)
       | `IStarT x -> KK.star x
       | `IZeroT -> KK.zero
       | `IOneT -> KK.one)) in
@@ -1510,7 +1532,7 @@ let handle_linear_recursion (scc : BURG.scc) classify_edge =
       [] in
   logf ~level:`info " Summaries of linearly recursive procedures: @."; 
     IntPairMap.iter (fun (p_entry'',p_exit'') summary -> 
-        logf ~level:`info " (%d,%d) := @." p_entry'' p_exit'';
+        logf ~level:`info " %s := @." (proc_name_string (p_entry'',p_exit''));
         print_indented ~level:`info 3 summary)
     assignment;
   summaries
@@ -1838,7 +1860,7 @@ let build_procedure_names_map rg =
     let name = Varinfo.show procedure in 
     procedure_names_map := ProcMap.add (entry,exit) name !procedure_names_map)
 
-let analyze_chora file =
+let analyze_chora_c file =
   Cra.populate_offset_table file;
   match file.entry_points with
   | [main] -> begin
@@ -1846,19 +1868,1301 @@ let analyze_chora file =
     build_procedure_names_map rg;
     let (ts, assertions) = Cra.make_transition_system rg in
     let summarizer = build_summarizer ts in
-    (* *) 
-    let query = BURG.mk_query ts summarizer in
-    (* *)
-    resource_bound_analysis rg query;
-    check_assertions rg query main assertions
+    (* Compute summaries *) 
+    let burg_query = BURG.mk_query ts summarizer in
+    (* Using summaries, compute resource bounds *)
+    resource_bound_analysis rg burg_query;
+    (* Using summaries, check assertions *)
+    check_assertions burg_query (RG.block_entry rg main).did assertions
     end
   (* *)
   | _ -> assert false;;
 
+
+(* ************ REACHC STUFF ************** *)
+
+module IntMap = BatMap.Int
+
+let name_of_symbol ctx symbol = 
+  match Syntax.symbol_name ctx symbol with
+  | None -> Syntax.show_symbol ctx symbol
+  | Some name -> name
+
+
+let is_syntactic_false srk expr = 
+  match Syntax.destruct srk expr with
+  | `Fls -> true
+  | _ -> false
+
+let is_syntactic_true srk expr = 
+  match Syntax.destruct srk expr with
+  | `Tru -> true
+  | _ -> false
+
+let get_const srk term = 
+  match Syntax.Term.destruct srk term with
+  | `App (func, args) -> 
+    if ((List.length args) = 0) then Some func else None
+  | _ -> None
+
+let is_predicate srk expr = 
+  match Syntax.destruct srk expr with
+  | `App (func, args) -> 
+    (match Syntax.expr_typ srk expr with
+    | `TyBool -> true
+    | _ -> false)
+  | _ -> false
+
+let id_of_predicate srk pred = 
+  match Syntax.destruct srk pred with
+  | `App (func, args) -> 
+    (match Syntax.expr_typ srk pred with
+    | `TyBool -> Syntax.int_of_symbol func
+    | _ -> failwith "id_of_predicate called on non-bool predicate")
+  | _ -> failwith "id_of_predicate called on non-application"
+
+let id_of_var srk var =
+  match Syntax.destruct srk var with
+  | `Var (vnum, typ) -> vnum
+  | _ -> failwith "id_of_var called on non-variable"
+
+let typ_of_var srk var =
+  match Syntax.destruct srk var with
+  | `Var (vnum, typ) -> typ
+  | _ -> failwith "typ_of_var called on non-variable"
+
+let find_predicates srk expr = 
+  let alg = function
+    | `And conjuncts -> List.concat conjuncts
+    | `Or disjuncts -> List.concat disjuncts
+    | `Quantify (_, name, typ, phi) -> phi
+    | `Not (phi) -> phi
+    | `Proposition (`Var i) -> failwith "Var-proposition in CHC"
+    | `Proposition (`App (p, args)) -> 
+      (*if is_predicate srk p then [id_of_predicate srk p] else []*)
+      [Syntax.int_of_symbol p]
+    | `Atom (_, x, y) -> []
+    | `Ite (cond, bthen, belse) -> cond @ bthen @ belse
+    | `Tru -> []
+    | `Fls -> []
+  in
+  Syntax.Formula.eval srk alg expr
+
+
+let logf_noendl ?(level=`info) =
+  let sf = Format.std_formatter in 
+  if (Log.level_leq (!Log.verbosity_level) level ||
+      Log.level_leq (!my_verbosity_level) level)
+  then Format.fprintf sf
+  else Format.ifprintf sf
+
+(*module VarSet = BatSet.Int*)
+
+type atom_arg_t = Ctx.t Srk.Syntax.Term.t
+type pred_num_t = int
+
+type atom_t = {
+    pred_num:pred_num_t;
+    args:atom_arg_t list
+}
+
+type chc_t = {
+   conc:atom_t;
+   hyps:atom_t list;
+   fmla:Ctx.t Srk.Syntax.Formula.t (* constraint formula *)
+} 
+
+type pred_info = {
+   example_atom:atom_t; (* possibly-meaningful predicate names, arity, etc. *)
+   (* arity ? *)
+   (* types ? *)
+   (* is this auxiliary? vs. is it taken from the original program? *)
+}
+
+module Chc = struct
+  (* constrained horn clause *)
+
+  module Atom = struct
+
+    (* atom, i.e., predicate occurrence *)
+    type t = atom_t
+
+    let construct (pred_num:pred_num_t) (args:atom_arg_t list) : atom_t = 
+      {pred_num=pred_num;args=args}
+
+    let arg_of_symbol sym : atom_arg_t =
+      Srk.Syntax.mk_const srk sym
+
+    let print ?(level=`info) srk atom = 
+      let n_args = List.length atom.args in 
+      logf_noendl ~level "%s(" 
+        (Syntax.show_symbol srk (Syntax.symbol_of_int atom.pred_num));
+      List.iteri 
+        (fun i arg ->
+          (*Format.printf "%s" (Syntax.show_symbol srk sym);*)
+          (*logf_noendl ~level "%a" (Syntax.pp_symbol srk) sym;*)
+          logf_noendl ~level "%a" (Syntax.Term.pp srk) arg;
+          if i != n_args - 1 then logf_noendl ~level ",")
+        atom.args;
+      logf_noendl ~level ")"
+
+  end
+
+  let construct 
+        (conc:atom_t) (hyps:atom_t list) 
+        (fmla:Ctx.t Srk.Syntax.Formula.t) : chc_t = 
+    {conc=conc;hyps=hyps;fmla=fmla}
+
+  let has_hyp chc target_hyp_num = 
+    List.fold_left 
+      (fun running hyp -> 
+         (running || (hyp.pred_num = target_hyp_num)))
+      false
+      chc.hyps
+
+  let symbol_of_term_opt term = 
+    match Syntax.destruct srk term with
+    | `App (func, args) when args = [] -> Some func
+    | _ -> None
+
+  let symbol_of_term ?(errormsg="fresh_symbols_for_args did not do its job") term = 
+    match Syntax.destruct srk term with
+    | `App (func, args) when args = [] -> func
+    | _ -> failwith errormsg
+
+  (** Replace all skolem constants appearing in the CHC
+   *    with fresh skolem constants *)
+  let fresh_skolem_all chc =
+    let freshen_symbol_to_symbol =
+      Memo.memo 
+        (fun sym ->
+          let name = name_of_symbol srk sym in
+          let typ = Syntax.typ_symbol srk sym in
+          Syntax.mk_symbol srk ~name typ) in
+    let freshen_symbol_to_const sym =
+      Syntax.mk_const srk (freshen_symbol_to_symbol sym) in
+    let freshen_expr expr =
+      Syntax.substitute_const srk freshen_symbol_to_const expr in
+    let freshen_atom atom = 
+      (* Term version *)
+      let new_args = List.map freshen_expr atom.args in 
+      Atom.construct atom.pred_num new_args in
+    let new_conc_atom = freshen_atom chc.conc in
+    let new_hyp_atoms = List.map freshen_atom chc.hyps in
+    let new_phi = freshen_expr chc.fmla in
+    construct new_conc_atom new_hyp_atoms new_phi
+
+  (* 
+  (* This old version generates equations only, never substitutions *)
+  (* This function allows you to specify that some arguments within some
+       atom should be replaced with a fresh variable even if other arguments
+       within the same atom are not being replaced. *)
+  let freshen_and_equate_args_finegrained chc plan_conc_atom plan_hyp_atom_list = 
+    let chc = fresh_skolem_all chc in
+    let old_atoms = chc.conc::chc.hyps in
+    let plan_pseudo_atoms = plan_conc_atom::plan_hyp_atom_list in
+    let equations = List.concat (List.map2 
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          assert (old_atom.pred_num = plan_pred_num);
+          List.concat (List.map2 
+             (fun old_arg plan_arg_option -> 
+                 match plan_arg_option with
+                 | None -> []
+                 | Some new_arg -> [Syntax.mk_eq srk old_arg new_arg])
+             old_atom.args
+             plan_args))
+      old_atoms
+      plan_pseudo_atoms) in
+    let new_atoms = List.map2
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          let new_args = List.map2
+            (fun old_arg plan_arg_option ->
+                match plan_arg_option with
+                | None -> old_arg
+                | Some new_arg -> new_arg)
+            old_atom.args
+            plan_args in
+          Atom.construct old_atom.pred_num new_args)
+      old_atoms
+      plan_pseudo_atoms in
+    let new_conc = List.hd new_atoms in
+    let new_hyps = List.tl new_atoms in
+    let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
+    construct new_conc new_hyps new_phi
+  *) 
+
+  (* This function allows you to specify that some arguments within some
+       atom should be replaced with a fresh variable even if other arguments
+       within the same atom are not being replaced. *)
+  let freshen_and_equate_args_finegrained chc plan_conc_atom plan_hyp_atom_list = 
+    let chc = fresh_skolem_all chc in
+    let old_atoms = chc.conc::chc.hyps in
+    let plan_pseudo_atoms = plan_conc_atom::plan_hyp_atom_list in
+    let sub_targets = ref Syntax.Symbol.Set.empty in
+    let seen_symbols = ref Syntax.Symbol.Set.empty in
+    (if !substitution_optimization then 
+    List.iter
+      (fun plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          List.iter
+            (fun plan_arg_opt ->
+                match plan_arg_opt with
+                | None -> ()
+                | Some arg ->
+                  match symbol_of_term_opt arg with
+                  | None -> 
+                    let new_symbols = Syntax.symbols arg in
+                    seen_symbols := Syntax.Symbol.Set.union 
+                      !seen_symbols new_symbols;
+                    sub_targets := Syntax.Symbol.Set.diff
+                      !sub_targets new_symbols
+                  | Some sym -> 
+                    if Syntax.Symbol.Set.mem sym !seen_symbols
+                    then 
+                      sub_targets := 
+                        Syntax.Symbol.Set.remove sym !sub_targets
+                    else 
+                      (sub_targets := 
+                         Syntax.Symbol.Set.add sym !sub_targets;
+                       seen_symbols :=
+                         Syntax.Symbol.Set.add sym !seen_symbols))
+            plan_args)
+      plan_pseudo_atoms);
+    let sub_sources = ref Syntax.Symbol.Set.empty in
+    let seen_symbols = ref Syntax.Symbol.Set.empty in
+    (if !substitution_optimization then 
+    List.iter
+      (fun atom ->
+          List.iter
+            (fun arg ->
+                match symbol_of_term_opt arg with
+                | None -> 
+                  let new_symbols = Syntax.symbols arg in
+                  seen_symbols := Syntax.Symbol.Set.union 
+                    !seen_symbols new_symbols;
+                  sub_sources := Syntax.Symbol.Set.diff
+                    !sub_sources new_symbols
+                | Some sym -> 
+                  if Syntax.Symbol.Set.mem sym !seen_symbols
+                  then 
+                    sub_sources := 
+                      Syntax.Symbol.Set.remove sym !sub_sources
+                  else 
+                    (sub_sources := 
+                      Syntax.Symbol.Set.add sym !sub_sources;
+                    seen_symbols :=
+                      Syntax.Symbol.Set.add sym !seen_symbols))
+            atom.args)
+      old_atoms);
+    let check_substitution old_arg new_arg =
+      match symbol_of_term_opt old_arg with
+      | None -> None
+      | Some src_sym ->
+        if Syntax.Symbol.Set.mem src_sym !sub_sources
+        then (match symbol_of_term_opt new_arg with
+              | None -> None
+              | Some tgt_sym -> 
+                if Syntax.Symbol.Set.mem tgt_sym !sub_targets
+                then Some (src_sym,new_arg)
+                else None)
+        else None in
+    let substitutions = ref Syntax.Symbol.Map.empty in
+    let equations = List.concat (List.map2 
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          assert (old_atom.pred_num = plan_pred_num);
+          List.concat (List.map2 
+             (fun old_arg plan_arg_option -> 
+                 match plan_arg_option with
+                 | None -> [] (* no new equation *)
+                 | Some new_arg -> 
+                   if !substitution_optimization
+                   then match check_substitution old_arg new_arg with
+                        | None -> (* create equation *)
+                          [Syntax.mk_eq srk old_arg new_arg]
+                        | Some (src_sym,tgt_term) ->
+                          substitutions := 
+                            Syntax.Symbol.Map.add
+                              src_sym
+                              tgt_term
+                              !substitutions;
+                          [] (* substitution instead of equation *)
+                   else (* create equation *)
+                     [Syntax.mk_eq srk old_arg new_arg])
+             old_atom.args
+             plan_args))
+      old_atoms
+      plan_pseudo_atoms) in
+    let subbed_fmla = 
+      if !substitution_optimization
+      then Syntax.substitute_map srk !substitutions chc.fmla
+      else chc.fmla in
+    let new_atoms = List.map2
+      (fun old_atom plan_pseudo_atom ->
+          let (plan_pred_num,plan_args) = plan_pseudo_atom in
+          let new_args = List.map2
+            (fun old_arg plan_arg_option ->
+                match plan_arg_option with
+                | None -> old_arg
+                | Some new_arg -> new_arg)
+            old_atom.args
+            plan_args in
+          Atom.construct old_atom.pred_num new_args)
+      old_atoms
+      plan_pseudo_atoms in
+    let new_conc = List.hd new_atoms in
+    let new_hyps = List.tl new_atoms in
+    let new_phi = Syntax.mk_and srk (subbed_fmla::equations) in
+    construct new_conc new_hyps new_phi
+
+
+  (* Coarse-grained version *)
+  let freshen_and_equate_args chc plan_conc_atom plan_hyp_atom_list =
+    let somes x = List.map (fun y -> Some y) x in
+    let nones x = List.map (fun y -> None) x in
+    let fg_conc_atom =
+      match plan_conc_atom with
+      | None -> (chc.conc.pred_num, nones chc.conc.args)
+      | Some atom -> (chc.conc.pred_num, somes atom.args) in
+    let fg_hyp_atom_list = 
+      List.map2
+        (fun plan_hyp_atom hyp ->
+            match plan_hyp_atom with
+            | None -> (hyp.pred_num, nones hyp.args)
+            | Some atom -> (hyp.pred_num, somes atom.args))
+        plan_hyp_atom_list
+        chc.hyps in
+    freshen_and_equate_args_finegrained chc fg_conc_atom fg_hyp_atom_list
+
+  let freshen_and_equate_args_directly chc plan_conc_atom plan_hyp_atom_list =
+    (* Old version that doesn't boil it down to a call to the fine-grained *)
+    let chc = fresh_skolem_all chc in
+    let old_atoms = chc.conc::chc.hyps in
+    let new_atoms = plan_conc_atom::plan_hyp_atom_list in
+    let equations = List.concat (List.map2 
+      (fun old_atom new_atom_option ->
+          match new_atom_option with
+          | None -> []
+          | Some new_atom ->
+             begin
+             assert (old_atom.pred_num = new_atom.pred_num);
+             List.map2 
+                (fun old_arg new_arg -> Syntax.mk_eq srk old_arg new_arg)
+                old_atom.args
+                new_atom.args
+             end)
+      old_atoms
+      new_atoms) in
+    let new_conc = match plan_conc_atom with
+                   | None -> chc.conc
+                   | Some new_conc_atom -> new_conc_atom in
+    let new_hyps = 
+        List.map2 (fun old_atom plan_hyp_atom ->
+            match plan_hyp_atom with
+            | None -> old_atom
+            | Some new_hyp_atom -> new_hyp_atom)
+        chc.hyps
+        plan_hyp_atom_list in 
+    let new_phi = Syntax.mk_and srk (chc.fmla::equations) in
+    construct new_conc new_hyps new_phi
+   
+  (* Replace *every* atom-arg with a fresh symbol *)
+  let fresh_symbols_for_args chc =
+    let new_sym atom arg_num = 
+        let name = 
+          (name_of_symbol srk (Syntax.symbol_of_int atom.pred_num)) 
+          ^ "_arg" ^ (string_of_int arg_num) in
+        Syntax.mk_symbol srk ~name `TyInt in
+    let atom_with_new_syms atom = 
+        let new_args = List.mapi
+          (fun arg_num arg ->
+              let sym = new_sym atom arg_num in
+              Syntax.mk_const srk sym)
+          atom.args in
+        Atom.construct atom.pred_num new_args in
+    let plan_conc = Some (atom_with_new_syms chc.conc) in
+    let plan_hyps = List.map
+      (fun hyp -> Some (atom_with_new_syms hyp))
+      chc.hyps in
+    freshen_and_equate_args chc plan_conc plan_hyps
+
+  let fresh_symbols_for_term_args chc =
+    let new_sym atom arg_num = 
+        let arg = List.nth atom.args arg_num in 
+        match Syntax.destruct srk arg with
+        | `App (func, f_args) when f_args = [] -> func
+        | _ -> (* predicate argument term that isn't a var *)
+          let name = 
+            (name_of_symbol srk (Syntax.symbol_of_int atom.pred_num)) 
+            ^ "_arg" ^ (string_of_int arg_num) in
+          Syntax.mk_symbol srk ~name `TyInt in
+    let atom_with_new_syms atom = 
+        let new_args = List.mapi
+          (fun arg_num arg ->
+              let sym = new_sym atom arg_num in
+              Syntax.mk_const srk sym)
+          atom.args in
+        Atom.construct atom.pred_num new_args in
+    let plan_conc = Some (atom_with_new_syms chc.conc) in
+    let plan_hyps = List.map
+      (fun hyp -> Some (atom_with_new_syms hyp))
+      chc.hyps in
+    freshen_and_equate_args chc plan_conc plan_hyps
+
+  (* This function makes all implicit constraints explicit. 
+    
+     An example of a CHC having implicit constraints is this one:
+    
+       P(x,y,z+1) :- Q(x,w,0,z*2) /\ phi
+       
+     which implicitly constrains the first arguments of P and Q to be
+     equal, and implicitly constrains the last argument of P, minus one,
+     to be half the last argument to Q, and implicitly constrains the
+     second-to-last argument to Q to be zero, all without involving any
+     explicit constrains in phi. *)
+  let fresh_symbols_to_make_constraints_explicit chc =
+    let atoms = chc.conc::chc.hyps in
+    let seen_symbols = ref Syntax.Symbol.Set.empty in
+    let plan_atoms = List.map
+      (fun atom ->
+          (atom.pred_num,
+           List.map
+             (fun arg ->
+                 let new_symbols = Syntax.symbols arg in
+                 let plan_arg = 
+                   (* If we set this to None, we'll replace arg with a 
+                        fresh constant; if we set it to Some t, we'll
+                        replace arg with t.  *)
+                   if Syntax.Symbol.Set.disjoint new_symbols !seen_symbols
+                   then match symbol_of_term_opt arg with (*arg is unseen *)
+                        | None -> None (*arg is a non-const term*)
+                        | Some sym -> Some arg (*arg is an unseen const*)
+                   else (* arg has been seen already *)
+                      None in
+                 seen_symbols := 
+                     Syntax.Symbol.Set.union !seen_symbols new_symbols;
+                 plan_arg)
+             atom.args))
+      atoms in
+    let plan_conc_atom = List.hd plan_atoms in
+    let plan_hyp_atoms = List.tl plan_atoms in
+    freshen_and_equate_args_finegrained chc plan_conc_atom plan_hyp_atoms
+
+  let subst_all outer_chc inner_chc = 
+    let outer_chc = fresh_skolem_all outer_chc in
+    let (outer_hyps_matching, outer_hyps_non_matching) = 
+      List.partition
+        (fun atom -> (atom.pred_num = inner_chc.conc.pred_num))
+        outer_chc.hyps
+      in
+    (if List.length outer_hyps_matching = 0 
+    then failwith "Mismatched subst_all call"
+    else ());
+    let (new_hyps, new_phis) = 
+      List.fold_left
+        (fun (hyps, phis) outer_hyp -> 
+          assert (outer_hyp.pred_num = inner_chc.conc.pred_num);
+          let plan_conc_atom = Some outer_hyp in
+          let plan_hyp_atom_list = List.map (fun hyp -> None) inner_chc.hyps in
+          let new_inner_chc = 
+              freshen_and_equate_args 
+                inner_chc plan_conc_atom plan_hyp_atom_list in
+          (new_inner_chc.hyps @ hyps, new_inner_chc.fmla::phis))
+        ([],[])
+        outer_hyps_matching
+      in
+    let phi = Syntax.mk_and srk (outer_chc.fmla::new_phis) in
+    let hyps = outer_hyps_non_matching @ new_hyps in
+    construct outer_chc.conc hyps phi
+
+  let disjoin chcs =
+    match chcs with
+    | [] -> failwith "Empty chc list in Chc.disjoin"
+    | [chc1] -> chc1
+    | chc1::old_chcs ->
+      let chc1 = fresh_skolem_all chc1 in
+      let chc1 = fresh_symbols_for_args chc1 in
+      let new_phis = 
+        List.map
+          (fun old_chc ->
+             let plan_conc_atom = Some chc1.conc in
+             let plan_hyp_atom_list = List.map (fun hyp -> Some hyp) chc1.hyps in
+             let new_chc = 
+               freshen_and_equate_args
+                 old_chc plan_conc_atom plan_hyp_atom_list in
+             new_chc.fmla) 
+          old_chcs in
+      let new_phi = Syntax.mk_or srk (chc1.fmla::new_phis) in
+      construct chc1.conc chc1.hyps new_phi
+
+  let subst_equating_globally chc subst_map = 
+    let sub_policy atom =
+        if IntMap.mem atom.pred_num subst_map 
+        then Some (IntMap.find atom.pred_num subst_map)
+        else None in
+    freshen_and_equate_args
+      chc
+      (sub_policy chc.conc)
+      (List.map sub_policy chc.hyps)
+
+  let print ?(level=`info) srk chc = 
+    logf_noendl ~level "{ @[";
+    List.iter 
+      (fun pred -> Atom.print srk pred; logf_noendl ~level ";@ ")
+      chc.hyps;    
+    logf_noendl ~level "%a@ -> " (Syntax.Formula.pp srk) chc.fmla;
+    Atom.print ~level srk chc.conc;
+    logf_noendl ~level "@] }@."
+ 
+  let print_as_wedge ?(level=`info) srk chc = 
+    let chc = fresh_symbols_for_term_args chc in 
+    logf_noendl ~level "{ @[";
+    List.iter 
+      (fun atom -> Atom.print srk atom; logf_noendl ~level ";@ ")
+      chc.hyps;
+    let all_preds = chc.conc::chc.hyps in 
+    let all_pred_args =
+      List.concat
+        (List.map 
+          (fun atom -> List.map symbol_of_term atom.args) all_preds) in
+    let exists = (fun sym -> List.mem sym all_pred_args) in 
+    let wedge = Wedge.abstract ~exists srk chc.fmla in
+    logf_noendl ~level "%a@ -> " Wedge.pp wedge;
+    Atom.print ~level srk chc.conc;
+    logf_noendl ~level "@] }@."
+
+  let to_transition chc = 
+    let chc = fresh_symbols_for_args chc in
+    assert (List.length chc.hyps = 1);
+    let hyp_atom = List.hd chc.hyps in
+    assert (hyp_atom.pred_num = chc.conc.pred_num);
+    (*Var.reset_tables;*)
+    (*List.iter (fun arg -> Var.register_var (symbol_of_term arg)) hyp_atom.args;*)
+    (* conc_args and hyp_args are lists of symbols *)
+    let transform = 
+      List.map2 
+        (fun pre post -> 
+            (let pre_sym = symbol_of_term pre in 
+             (* pre-state as variable *)
+             (match Var.of_symbol pre_sym with
+             | Some v -> v
+             | _ -> failwith "Unregistered variable in to_transition"),
+            (* post-state is term *)
+            post
+            (* if post-state were symbol: *) (*Syntax.mk_const srk post)*)))
+        hyp_atom.args
+        chc.conc.args
+      in
+    (chc, K.construct chc.fmla transform)
+
+  (* Make a chc that corresponds to the identity transition, 
+     on the model of the given model_chc.
+     The returned chc will have the same atoms as model_chc.  *)
+  let identity_chc model_chc =
+    assert (List.length model_chc.hyps = 1);
+    let hyp_pred = List.hd model_chc.hyps in
+    assert (hyp_pred.pred_num = model_chc.conc.pred_num);
+    let eqs = List.fold_left2
+      (fun eqs hyp_arg conc_arg ->
+          let eq = Syntax.mk_eq srk hyp_arg conc_arg in eq::eqs)
+      [] 
+      hyp_pred.args
+      model_chc.conc.args
+    in
+    let phi = Syntax.mk_and srk eqs in
+    construct model_chc.conc model_chc.hyps phi
+  
+  (* Make a fact chc having a false constraint, 
+     on the model of the given conclusion atom. *)
+  let false_fact conc_atom =
+    let chc = construct conc_atom [] (Syntax.mk_false srk) in
+    fresh_symbols_for_args chc 
+  
+  let of_transition tr model_chc : chc_t =
+    if K.is_one tr then identity_chc model_chc else
+    let post_shim = Memo.memo 
+        (fun sym -> Syntax.mk_symbol srk 
+         ~name:("Post_"^(Syntax.show_symbol srk sym)) `TyInt) in
+    let (tr_symbols, post_def) =
+      BatEnum.fold (fun (symbols, post_def) (var, term) ->
+          let pre_sym = Var.symbol_of var in
+          match get_const srk term with
+          | Some existing_post_sym ->
+            ((pre_sym,existing_post_sym)::symbols,post_def)
+          | None -> 
+            let new_post_sym = post_shim pre_sym in
+            let post_term = Syntax.mk_const srk new_post_sym in
+            ((pre_sym,new_post_sym)::symbols,(Syntax.mk_eq srk post_term term)::post_def)
+          )
+        ([], [])
+        (K.transform tr)
+    in
+    let body =
+      SrkSimplify.simplify_terms srk (Syntax.mk_and srk ((K.guard tr)::post_def))
+    in
+    (* Now, body is a formula over the pre-state and post-state variable pairs
+       found in tr_symbols.  I assume that the pre-state variables haven't changed,
+       but the post-state variables may have changed.  Because the post-state 
+       variables may have changed, I will look up each of the variables in the
+       predicate-occurrence in the hypothesis of the model rule and find the
+       (new?) post-state variable that it corresponds to, and then I'll put that 
+       variable into the predicate-occurrence in the conclusion of the rule that
+       I return.  *)
+    assert (List.length model_chc.hyps = 1);
+    let hyp_pred = List.hd model_chc.hyps in
+    assert (hyp_pred.pred_num = model_chc.conc.pred_num);
+    let new_args = 
+      List.map 
+        (fun hyp_arg -> 
+           let hyp_var = symbol_of_term hyp_arg in
+           let rec go pairs = 
+             match pairs with
+             | (pre_sym, post_sym)::rest -> 
+                     if hyp_var = pre_sym 
+                     then Syntax.mk_const srk post_sym 
+                     else go rest
+             | [] -> logf ~level:`fatal "  ERROR: missing symbol %a" (Syntax.pp_symbol srk) hyp_var;
+                     failwith "Could not find symbol in of_transition"
+           in go tr_symbols)
+        hyp_pred.args in
+    let new_conc_pred = Atom.construct model_chc.conc.pred_num new_args in 
+    (construct new_conc_pred model_chc.hyps body)
+
+end
+
+let build_chc_program srk1 srk2 phi query_pred =
+  let rec get_rule vars rules phi = 
+    match Syntax.destruct srk1 phi with
+    | `Quantify (`Forall, nam, typ, expr) ->
+       get_rule ((nam,typ)::vars) rules expr
+    | `Or [nothyp; conc] ->
+       (match Syntax.destruct srk1 nothyp with 
+       | `Not (hyp) -> (hyp,conc,vars)::rules (* reverse? *)
+       | _ -> logf ~level:`always "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
+              failwith "Unrecognized rule format (No negated hypothesis)")
+    | _ -> logf ~level:`always "  Bad Rule: %a" (Syntax.Formula.pp srk1) phi;
+           failwith "Unrecognized rule format (No top-level quantifier or disjunction)"
+    in
+  let rules = 
+    match Syntax.destruct srk1 phi with
+    | `And (parts) -> 
+      List.fold_left 
+        (fun rules psi -> get_rule [] rules psi)
+        []
+        parts
+    | `Tru -> logf ~level:`always "RESULT: SAT (warning: empty CHC program; EMPTY_PROGRAM)";
+      []
+    | _ -> 
+      (*uncomment to allow*) get_rule [] [] phi
+      (*forbid*) (*failwith "Currently forbidden: single-clause CHC program"*)
+    in 
+  (* Filter out 'dummy rules' having conclusion 'true' *)
+  let rules = List.filter 
+    (fun (hyp,conc,vars) -> not (is_syntactic_true srk1 conc)) rules in 
+  let rename_pred_internal sym = 
+    let name = Syntax.show_symbol srk1 sym in
+    Syntax.mk_symbol srk2 ~name:name `TyBool
+    in
+  let rename_pred = Memo.memo rename_pred_internal in
+  let chc_record_of_rule (hyp,conc,vars) = 
+    let var_to_skolem_internal var = 
+      (let (name, typ) = List.nth vars var in
+      match typ with 
+      | `TyInt | `TyBool -> Syntax.mk_symbol srk2 ~name:name `TyInt 
+      | `TyReal -> failwith "Unrecognized rule format (Real-valued variable)")
+      in
+    let var_to_skolem = Memo.memo var_to_skolem_internal in
+    let convert_formula expr = 
+      let mut_equations = ref [] in
+      let mut_predicates = ref [] in
+      let mut_booleans = ref Syntax.Symbol.Set.empty in
+      let rec go_formula expr = 
+        begin
+          match Syntax.Formula.destruct srk1 expr with
+          (* Negation node *)
+          | `Not p ->
+            begin
+              match Syntax.Formula.destruct srk1 p with
+              | `Proposition (`Var var) ->
+                (* Special case: *)
+                (* The boolean quantified variable var appears negatively here. *)
+                (* We replace v with an integer variable w and assert w == 0. *)
+                let sym = var_to_skolem var in 
+                mut_booleans := Syntax.Symbol.Set.add sym !mut_booleans;
+                Syntax.mk_eq srk2 (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.zero) 
+              | _ -> 
+              (* General case of negation: *)
+              let subexpr = go_formula p in
+              Syntax.mk_not srk2 subexpr
+            end
+          (* Non-recursive nodes *)
+          | `Tru -> Syntax.mk_true srk2
+          | `Fls -> Syntax.mk_false srk2
+          | `Proposition (`Var var) ->
+            (* The boolean quantified variable var appears positively here. *)
+            (* We replace v with an integer variable w and assert w == 1. *)
+            let sym = var_to_skolem var in 
+            mut_booleans := Syntax.Symbol.Set.add sym !mut_booleans;
+            Syntax.mk_eq srk2 (Syntax.mk_const srk2 sym) (Syntax.mk_real srk2 QQ.one) 
+          | `Proposition (`App (f, args)) ->
+            (* A horn-clause-predicate occurrence *)
+            let fsym = rename_pred f in 
+            let fnumber = Syntax.int_of_symbol fsym in
+            let rec accum_arg_info (arglist: (('a, 'b) Syntax.expr) list) symbollist = 
+              match arglist with
+              | [] -> symbollist
+              | orig_arg::more_args ->
+                (* orig_arg is an argument to a horn-clause predicate *)
+                begin
+                  match Syntax.Expr.refine srk1 orig_arg with
+                  | `Term arg ->
+                  begin
+                    (* Integer argument to horn-clause predicate *)
+                    match Syntax.destruct srk1 arg with
+                    | `Var (v, `TyInt) -> 
+                      accum_arg_info more_args ((var_to_skolem v)::symbollist)
+                    | `Var (v, `TyReal) ->
+                      failwith "Unrecognized rule format (Got real predicate argument)"
+                    | _ -> 
+                      let term = go_term arg in
+                      let termsymbol = Syntax.mk_symbol srk2 ~name:"TermSymbol" `TyInt in
+                      let termeq = Syntax.mk_eq srk2 (Syntax.mk_const srk2 termsymbol) term in
+                      mut_equations := termeq :: !mut_equations;
+                      accum_arg_info more_args (termsymbol::symbollist)
+                  end
+                  | `Formula arg ->
+                  begin
+                    (* Boolean argument to horn-clause predicate *)
+                    match Syntax.Formula.destruct srk1 arg with
+                    | `Proposition (`Var var) ->
+                      (* Common case: boolean variable *)
+                      let sym = var_to_skolem var in 
+                      (*mut_booleans := Syntax.Symbol.Set.add sym !mut_booleans;*)
+                      accum_arg_info more_args (sym::symbollist)
+                    | _ -> 
+                      let subformula = go_formula arg in
+                      let formulasymbol = Syntax.mk_symbol srk2 ~name:"FormulaSymbol" `TyInt in
+                      let formulatrue = 
+                        (Syntax.mk_eq srk2 
+                          (Syntax.mk_const srk2 formulasymbol) 
+                          (Syntax.mk_real srk2 (QQ.one))) in
+                      let formulafalse = 
+                        (Syntax.mk_eq srk2 
+                          (Syntax.mk_const srk2 formulasymbol) 
+                          (Syntax.mk_real srk2 (QQ.zero))) in
+                      let notf f = Syntax.mk_not srk2 f in
+                      let formulaiff = 
+                          Syntax.mk_or srk2 
+                            [Syntax.mk_and srk2 [ formulatrue;      subformula]; 
+                             Syntax.mk_and srk2 [formulafalse; notf subformula]]
+                      in
+                      mut_equations := formulaiff :: !mut_equations;
+                      accum_arg_info more_args (formulasymbol::symbollist)
+                  end
+                end
+              in
+            let argsymbols = accum_arg_info args [] in
+            let argterms = List.map (fun sym -> Syntax.mk_const srk2 sym) argsymbols in
+            let atom = Chc.Atom.construct fnumber (List.rev argterms) in
+            mut_predicates := atom :: !mut_predicates;
+            Syntax.mk_true srk2
+          (* Recursive nodes: bool from something *)
+          | `Ite (cond, bthen, belse) ->
+            let cond_f = go_formula cond in
+            let bthen_f = go_formula bthen in 
+            let belse_f = go_formula belse in 
+            Syntax.mk_ite srk2 cond_f bthen_f belse_f
+          (* Recursive nodes: bool from bool *)
+          | `And exprs -> 
+            let subexprs = combine_formulas exprs in  
+            Syntax.mk_and srk2 subexprs
+          | `Or exprs ->
+            let subexprs = combine_formulas exprs in  
+            Syntax.mk_or srk2 subexprs
+          (* Recursive nodes: bool from int *)
+          | `Atom (op, s, t) -> 
+            let (s_sub,t_sub) = combine_two_terms s t in
+            (match op with
+            | `Eq ->  Syntax.mk_eq srk2 s_sub t_sub
+            | `Leq -> Syntax.mk_leq srk2 s_sub t_sub 
+            | `Lt ->  Syntax.mk_lt srk2 s_sub t_sub)
+          (* Format-violating nodes: *)
+          | `Quantify (_,_,_,_) -> 
+            logf ~level:`fatal "  Bad Rule: %a" (Syntax.Formula.pp srk1) expr;
+            failwith "Unrecognized rule format (Got quantifier in rule)"
+        end
+      and go_term term = 
+        begin
+          match Syntax.Term.destruct srk1 term with
+          (* Non-recursive nodes *)
+          | `Real qq -> Syntax.mk_real srk2 qq
+          | `Var (var, `TyInt) -> 
+            let sym = var_to_skolem var in 
+            Syntax.mk_const srk2 sym
+          (* Recursive nodes: int from int *)
+          | `Add terms ->
+            let subexprs = combine_terms terms in  
+            Syntax.mk_add srk2 subexprs
+          | `Mul terms ->
+            let subexprs = combine_terms terms in  
+            Syntax.mk_mul srk2 subexprs
+          | `Binop (`Div, s, t) ->
+            let (s_sub,t_sub) = combine_two_terms s t in
+            Syntax.mk_div srk2 s_sub t_sub
+          | `Binop (`Mod, s, t) ->
+            let (s_sub,t_sub) = combine_two_terms s t in
+            Syntax.mk_mod srk2 s_sub t_sub
+          | `Unop (`Floor, t) ->
+            let subexpr = go_term t in
+            Syntax.mk_floor srk2 subexpr
+          | `Unop (`Neg, t) ->
+            let subexpr = go_term t in
+            Syntax.mk_neg srk2 subexpr
+          | `Ite (cond, bthen, belse) ->
+            let cond_f = go_formula cond in
+            let bthen_f = go_term bthen in 
+            let belse_f = go_term belse in 
+            Syntax.mk_ite srk2 cond_f bthen_f belse_f
+          (* Format-violating nodes: *)
+          | `Var (v, `TyReal) ->
+            logf ~level:`fatal "  Bad Rule: %a" (Syntax.Term.pp srk1) term;
+            failwith "Unrecognized rule format (Got real-valued variable)"
+          | `App (func, args) -> 
+            logf ~level:`fatal "  Bad Rule: %a" (Syntax.Term.pp srk1) term;
+            failwith "Unrecognized rule format (Got function application)"
+        end
+      and combine_formulas exprs = 
+        begin
+          List.fold_left
+            (fun subexprs ex -> 
+                let ex_s = go_formula ex in 
+                (ex_s::subexprs))
+            []
+            exprs
+        end
+      and combine_terms exprs = 
+        begin 
+          List.fold_left
+            (fun subexprs ex -> 
+                let ex_s = go_term ex in 
+                (ex_s::subexprs))
+            []
+            exprs
+        end
+      and combine_two_terms s t = 
+        begin
+          let s_sub = go_term s in
+          let t_sub = go_term t in 
+          (s_sub,t_sub)
+        end
+      in
+      let phi = go_formula expr in
+      (phi, !mut_predicates, !mut_equations, !mut_booleans)
+      (* end of convert_formula *)
+    in
+    let (hyp_sub,hyp_preds,hyp_eqs,hyp_bools) = convert_formula hyp in
+    let (conc_sub,conc_preds,conc_eqs,conc_bools) = convert_formula conc in
+    let conc_atom = match conc_preds with
+      | [conc_atom] -> conc_atom
+      | [] -> 
+        if (not (is_syntactic_false srk2 conc_sub))
+        then failwith "Unrecognized rule format (Non-false non-predicate conclusion)"
+        else Chc.Atom.construct query_pred []
+      | _ -> failwith "Unrecognized rule format (Multiple conclusion predicate)"
+    in 
+    let eqs = hyp_eqs @ conc_eqs in
+    let bools = Syntax.Symbol.Set.to_list 
+      (Syntax.Symbol.Set.union hyp_bools conc_bools) in
+    let bool_constraints = 
+      List.map 
+        (fun boolsym ->
+           Syntax.mk_or srk2
+             [(Syntax.mk_eq srk2 
+               (Syntax.mk_const srk2 boolsym) 
+              (Syntax.mk_real srk2 (QQ.zero))); 
+             (Syntax.mk_eq srk2 
+               (Syntax.mk_const srk2 boolsym) 
+             (Syntax.mk_real srk2 (QQ.one)))])
+       bools in
+    let phi = Syntax.mk_and srk2 (hyp_sub::(eqs @ bool_constraints)) in
+    (Chc.construct conc_atom hyp_preds phi)
+    (* *)
+  in
+  List.map chc_record_of_rule rules
+
+let print_summaries summaries = 
+  logf ~level:`always "\n** Summaries as formulas **\n";
+  BatMap.Int.iter
+    (fun pred_num summary_rule ->
+        Chc.print ~level:`always srk summary_rule;
+        logf ~level:`always "  ")
+    !summaries;
+  logf ~level:`always "\n** Summaries as wedges **\n";
+  BatMap.Int.iter
+    (fun pred_num summary_rule ->
+        Chc.print_as_wedge ~level:`always srk summary_rule;
+        logf ~level:`always "  ")
+    !summaries
+
+let augment_pred_info_map pred_info_map chc_map = 
+  let pred_info_map = ref pred_info_map in
+  BatMap.Int.iter (fun pred_num chcs ->
+      List.iter (fun chc -> 
+          List.iter (fun atom ->
+              if not (IntMap.mem atom.pred_num !pred_info_map)
+              then let info = {example_atom=atom} in
+                  pred_info_map := 
+                    IntMap.add atom.pred_num info !pred_info_map)
+          (chc.conc::chc.hyps))
+      chcs)
+  chc_map;
+  !pred_info_map
+
+let build_pred_info_map chc_map = 
+  augment_pred_info_map (BatMap.Int.empty) chc_map
+
+type procedure_info = {
+    name : string;
+    entry : int;
+    exit : int;
+    proc_symbol : Srk.Syntax.symbol;
+    pred_symbol : Srk.Syntax.symbol;
+}
+
+(* Assume that the term is a symbol and return that symbol *)
+let symbol_of_term term = 
+  match Syntax.destruct srk term with
+  | `App (func, args) when args = [] -> func
+  | _ -> failwith "symbol_of_term saw a non-symbol term"
+
+let arg_symbols_of_chc chc =
+  let atoms = chc.conc::chc.hyps in
+  List.concat
+    (List.map
+       (fun atom ->
+           List.map
+             (fun arg -> symbol_of_term arg)
+             atom.args)
+       atoms)
+
+let arg_symbols_of_chc_hyps chc =
+  let atoms = chc.hyps in
+  List.concat
+    (List.map
+       (fun atom ->
+           List.map
+             (fun arg -> symbol_of_term arg)
+             atom.args)
+       atoms)
+
+(*
+(* For reference, here is CHORA's C-assertion-checking code *)
+let check_assertions query entry_main assertions = 
+    if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
+    logf ~level:`always "======= Assertion Checking ======";
+    assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
+        let path = BURG.path_weight query entry_main v in
+        let sigma sym =
+          match Cra.V.of_symbol sym with
+          | Some v when K.mem_transform v path ->
+            K.get_transform v path
+          | _ -> Ctx.mk_const sym
+        in
+        let phi = Syntax.substitute_const Ctx.context sigma phi in
+        let path_condition =
+          Ctx.mk_and [K.guard path; Ctx.mk_not phi]
+          |> SrkSimplify.simplify_terms srk
+        in
+        logf ~level:`trace "Path condition:@\n%a"
+          (Syntax.pp_smtlib2 Ctx.context) path_condition;
+        Cra.dump_goal loc path_condition;
+        match Wedge.is_sat Ctx.context path_condition with
+        | `Sat -> 
+          Report.log_error loc msg;
+          Format.printf "Assertion on line %d FAILED: \"%s\"\n" loc.Cil.line msg
+        | `Unsat -> 
+          Report.log_safe ();
+          Format.printf "Assertion on line %d PASSED: \"%s\"\n" loc.Cil.line msg
+        | `Unknown ->
+          logf ~level:`warn "Z3 inconclusive";
+          Report.log_error loc msg;
+          Format.printf "Assertion on line %d FAILED/INCONCLUSIVE: \"%s\"\n" loc.Cil.line msg
+          );
+    Format.printf "=================================\n"
+*)
+
+(* This is the CHC equivalent of checking assertions *)
+let analyze_query_procedure query_summary = 
+  logf ~level:`info " query summary is: %a" K.pp query_summary;
+  let phi = K.guard query_summary in
+  match Wedge.is_sat srk phi with
+  | `Sat -> logf ~level:`always "RESULT: UNKNOWN (final constraint is sat)"
+  | `Unsat -> logf ~level:`always "RESULT: SAT (final constraint is unsat)"
+  | `Unknown -> 
+    if not !reachc_retry_flag then 
+      logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
+    else
+    begin
+      logf ~level:`info "Preliminary: unknown (final constraint unknown)";
+      logf ~level:`info "Retrying...";
+      let wedge = Wedge.abstract srk phi in
+      if Wedge.is_bottom wedge
+      then logf ~level:`always "RESULT: SAT (final constraint is unsat)"
+      else logf ~level:`always "RESULT: UNKNOWN (final constraint unknown)"
+    end
+
+let build_path_in_BURG 
+      chc burg predsym_to_proc_map globals_map new_vertex shared_locals =
+  let open WeightedGraph in
+  let local_counter = ref 0 in
+  let locals_map =
+    List.fold_left
+      (fun locals_map arg_sym -> 
+          let var_record = 
+            (if !reachc_share_locals
+            then (let num_shared = List.length !shared_locals in
+                 if !local_counter < num_shared
+                 then List.nth !shared_locals (num_shared - !local_counter - 1)
+                 else (let new_name = "local_" ^ (string_of_int !local_counter) in
+                       let new_record = make_aux_local_variable new_name in
+                       shared_locals := new_record :: !shared_locals;
+                       new_record))
+            else make_aux_local_variable (name_of_symbol srk arg_sym)) in
+          local_counter := !local_counter + 1;
+          Syntax.Symbol.Map.add arg_sym var_record locals_map)
+      Syntax.Symbol.Map.empty
+      (arg_symbols_of_chc_hyps chc) in
+  (*let locals_list = 
+    List.map
+      (fun var_record -> var_record.value)
+      (BatList.of_enum (Syntax.Symbol.Map.values locals_map)) in
+  let havoc_locals = K.havoc locals_list in*)
+  let proc = IntMap.find chc.conc.pred_num predsym_to_proc_map in
+  let source_vertex = ref proc.entry in
+  let append_edge ?target weight =
+    let tgt = match target with 
+              | None -> new_vertex () 
+              | Some t -> t in
+    burg := WeightedGraph.add_edge !burg !source_vertex weight tgt;
+    source_vertex := tgt in
+  (* Unnecessary edge: havoc the local vars of this chc *)
+  (*append_edge (Weight havoc_locals);*)
+  (* Next set of edges: two edges for each call *)
+  List.iter
+    (fun hyp -> 
+        let callee = IntMap.find hyp.pred_num predsym_to_proc_map in
+        (* Call edge *)
+        append_edge (Call (callee.entry,callee.exit));
+        (* The above call leaves results in globalvar_0,...,globalvar_n *)
+        let assignments = 
+          List.mapi
+            (fun i arg ->
+                let arg_sym = symbol_of_term arg in
+                let local = Syntax.Symbol.Map.find arg_sym locals_map in
+                let global_sym = (BatMap.Int.find i globals_map).symbol in
+                let global_term = Syntax.mk_const srk global_sym in
+                (* Now, we assign localvar_i := globalvar_i *)
+                (local.value, global_term))
+            hyp.args in
+        (* Assignment edge *)
+        (* DEBUGGING: REMOVE ME LATER *)
+        (*let t =  in Format.printf "ASSIGNMENT EDGE of %s: %a@." 
+          (name_of_symbol srk (Syntax.symbol_of_int chc.conc.pred_num)) K.pp t ;*)
+        append_edge (Weight (K.parallel_assign assignments)))
+    chc.hyps;
+  (* Finally, we create an edge that assigns to the globals using the
+       constraint of the given CHC *)
+  (* Constants in the constraint formula that correspond to one of our
+       local variables should be replaced by the corresponding
+       local variable symbol *)
+  let subst sym =
+    let new_sym = if Syntax.Symbol.Map.mem sym locals_map 
+    then (Syntax.Symbol.Map.find sym locals_map).symbol
+                  else sym in
+    Syntax.mk_const srk new_sym in
+  let guard = Syntax.substitute_const srk subst chc.fmla in
+  let assignments = 
+    List.mapi
+      (fun i arg ->
+          let arg_sym = symbol_of_term arg in
+          let arg_term = Syntax.mk_const srk arg_sym in
+          let global_var = (BatMap.Int.find i globals_map).value in
+          (* Now, we assign globalvar_i := conclusion_atom_arg_i *)
+          (global_var, arg_term))
+      chc.conc.args in
+
+  (* DEBUGGING: REMOVE ME LATER *)
+  (*let t = (K.construct guard assignments)  in
+  Format.printf "TERMINAL EDGE of %s: %a@." 
+    (name_of_symbol srk (Syntax.symbol_of_int chc.conc.pred_num)) K.pp t
+  ;*)
+
+  append_edge ~target:proc.exit (Weight (K.construct guard assignments))
+
+let build_BURG_from_chc_map chc_map pred_info_map query_int =
+  let num_globals =
+    BatMap.Int.fold
+      (fun _ pred_info_record running ->
+          max running
+            (List.length pred_info_record.example_atom.args))
+      pred_info_map
+      0 in
+  let burg = ref BURG.empty in
+  let last_vertex = ref 10000 in
+  let new_vertex () = 
+      last_vertex := !last_vertex + 1;
+      burg := WeightedGraph.add_vertex !burg !last_vertex;
+      !last_vertex in
+  let predsym_to_proc_map =
+    IntMap.fold
+      (fun pred_symbol_int pred_info_record running ->
+          let pred_symbol = Syntax.symbol_of_int pred_symbol_int in
+          let name = name_of_symbol srk pred_symbol in
+          let num_args = List.length pred_info_record.example_atom.args in
+          let proc_symbol = make_aux_procedure srk num_args name in
+          let entry = new_vertex () in
+          let exit = new_vertex () in
+          procedure_names_map := 
+            ProcMap.add (entry,exit) name !procedure_names_map;
+          let proc_info = 
+              {name=name;entry=entry;exit=exit;
+               proc_symbol=proc_symbol;pred_symbol=pred_symbol} in
+          IntMap.add pred_symbol_int proc_info running)
+      pred_info_map
+      IntMap.empty in
+  let globals_map =
+    let nums = BatEnum.range 0 ~until:num_globals in
+    BatEnum.fold
+      (fun running num ->
+          let num_str = string_of_int num in
+          let val_sym = AuxVarModuleC.make_aux_global_variable ("g" ^ num_str) in
+          IntMap.add num val_sym running)
+      IntMap.empty
+      nums in
+  let shared_locals = ref [] in
+  IntMap.iter
+    (fun pred_symbol_int chcs ->
+        List.iter
+          (fun chc -> 
+              build_path_in_BURG
+                chc burg predsym_to_proc_map globals_map new_vertex shared_locals)
+          chcs)
+    chc_map;
+  (!burg, predsym_to_proc_map)
+
+(* Ensure that there always exists at least the query "false" *)
+let append_trivial_query chc_map query_int =
+  let query_atom = Chc.Atom.construct query_int [] in
+  let trivial_query = Chc.false_fact query_atom in
+  let query_chcs = BatMap.Int.find_default [] query_int chc_map in
+  BatMap.Int.add query_int (trivial_query::query_chcs) chc_map
+
+let analyze_chc_program chcs query_int = 
+  let chc_map = List.fold_left
+    (fun chc_map chc ->
+      (* Required for sound (and non-crashing) analysis : 
+          We force all predicate arguments to be (1) distinct (2) symbols.
+          Both (1) and (2) are assumed by later code.  *)
+      let chc = Chc.fresh_symbols_for_args chc in
+      BatMap.Int.add
+        chc.conc.pred_num
+        (chc::(BatMap.Int.find_default [] chc.conc.pred_num chc_map))
+        chc_map)
+    BatMap.Int.empty
+    chcs in
+  let chc_map = append_trivial_query chc_map query_int in
+  let pred_info_map = build_pred_info_map chc_map in
+  logf ~level:`info "ChoraCHC: started build_BURG_from_chc_map@.";
+  let (burg, predsym_to_proc_map) = 
+      build_BURG_from_chc_map chc_map pred_info_map query_int in
+  logf ~level:`info "ChoraCHC: finished build_BURG_from_chc_map@.";
+  let query_proc = IntMap.find query_int predsym_to_proc_map in
+  (* At this point, burg contains the bottom-up RecGraph that we want *)
+  let summarizer = build_summarizer burg in
+  (* Compute procedure summaries: *)
+  logf ~level:`info "ChoraCHC: started BURG.mk_query@.";
+  let burg_query = BURG.mk_query burg summarizer in
+  logf ~level:`info "ChoraCHC: finished BURG.mk_query@.";
+  (if !chora_print_summaries
+  then 
+      let procedures = BatList.of_enum (M.keys burg_query.summaries) in
+      let procedures = procedures @ [(query_proc.entry,query_proc.exit)] in
+      List.iter
+        (fun (en,ex) ->
+             let summary = BURG.path_weight burg_query en ex in
+             let pp_fun = (fun fmt str -> Format.fprintf fmt "%s" str) in
+             let pp_arg = ProcMap.find (en,ex) !procedure_names_map in
+             print_procedure_summary_internal summary pp_fun pp_arg)
+        procedures);
+  (* Prepare to check assertions *)
+  (*let query_entry_exit = (query_proc.entry,query_proc.exit) in*)
+  (*let query_summary = M.find query_entry_exit burg_query.summaries in*)
+  logf ~level:`info "ChoraCHC: started BURG.path_weight for query@.";
+  let query_summary = 
+    BURG.path_weight burg_query query_proc.entry query_proc.exit in
+  logf ~level:`info "ChoraCHC: finished BURG.path_weight for query@.";
+  (* Check assertions *)
+  logf ~level:`info "ChoraCHC: started analyze_query_procedure@.";
+  analyze_query_procedure query_summary;
+  logf ~level:`info "ChoraCHC: finished analyze_query_procedure@."
+
+let really_parse_smt2 file = 
+  let filename = file.filename in
+  (* FIXME let Z3 read the whole file... *)
+  let chan = open_in filename in
+  logf ~level:`info "ChoraCHC: started reading file@.";
+  let str = really_input_string chan (in_channel_length chan) in
+  logf ~level:`info "ChoraCHC: finished reading file@.";
+  close_in chan;
+  let z3ctx = Z3.mk_context [] in
+  logf ~level:`info "ChoraCHC: started SrkZ3 parse@.";
+  let phi = SrkZ3.load_smtlib2 ~context:z3ctx Pctx.context str in
+  logf ~level:`info "ChoraCHC: finished SrkZ3 parse@.";
+  let query_sym = Syntax.mk_symbol srk ~name:"QUERY" `TyBool in
+  let query_int = Syntax.int_of_symbol query_sym in
+  logf ~level:`info "ChoraCHC: started build_chc_program@.";
+  let chcs = build_chc_program Pctx.context srk phi query_int in
+  logf ~level:`info "ChoraCHC: finished build_chc_program@.";
+  List.iter
+    (fun chc ->
+        logf_noendl ~level:`info "Incoming CHC: @.  ";
+        Chc.print srk chc)
+    chcs;
+  analyze_chc_program chcs query_int
+
+let dummy_parse_smt2 filename =
+  let (dummy_file : CfgIr.file) = 
+    {filename = filename (*"dummy_file"*);
+     funcs = [];
+     threads = [];
+     entry_points = [];
+     vars = [];
+     types = [];
+     globinit = None} in
+  CfgIr.gfile := Some dummy_file;
+  dummy_file
+
+let _ = 
+  CmdLine.register_parser ("smt2", dummy_parse_smt2);
+  CmdLine.register_pass
+    ("-chorachc",
+     really_parse_smt2,
+     " CHC analysis for non-linear recursion");
+  CmdLine.register_config
+    ("-chorachc-no-retry",
+     Arg.Clear reachc_retry_flag,
+     " Do not apply a second step of wedge abstraction to query summary");
+  CmdLine.register_config
+    ("-chorachc-no-share-locals",
+     Arg.Clear reachc_share_locals,
+     " Don't use a shared pool of local variables")
+
 let _ =
   CmdLine.register_pass
     ("-chora",
-     analyze_chora,
+     analyze_chora_c,
      " Compositional recurrence analysis for non-linear recursion");
   CmdLine.register_config
     ("-chora-summaries",
