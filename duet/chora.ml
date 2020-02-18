@@ -153,7 +153,7 @@ module IcraPathExpr = struct
     | `IOne ]
  
   type ('a,'b) open_pathexprT = (* Tensored open path expressions *)
-    [ `ITensor of 'a * 'a
+    [ `ITensor of 'a * 'a       (* Note: really this is "tensor transpose" *)
     | `IProjectT of 'b
     | `IMulT of 'b * 'b 
     | `IAddT of 'b * 'b
@@ -175,7 +175,7 @@ module IcraPathExpr = struct
     | IZero
   and t = pe hobj
   and peT =                      (* Tensored path expressions *)
-    | ITensor of t * t
+    | ITensor of t * t           (* NOTE: really this is "tensor transpose" *)
     | IProjectT of tT
     | IMulT of tT * tT
     | IAddT of tT * tT
@@ -259,6 +259,7 @@ module IcraPathExpr = struct
   let mk_project ctx x = match x.obj with  
     | IZero -> mk_zero ctx
     | IOne -> mk_one ctx
+    | IProject a -> x (* New rule in 2020 *)
     | _ -> HC.hashcons ctx.uctx (IProject x)
   let mk_mul ctx x y = match x.obj, y.obj with
     | IZero, _ -> mk_zero ctx
@@ -288,12 +289,15 @@ module IcraPathExpr = struct
   let mk_projectT ctx x = match x.obj with  
     | IZeroT -> mk_zeroT ctx
     | IOneT -> mk_oneT ctx
+    | IProjectT a -> x (* New rule in 2020 *)
     | _ -> HCT.hashcons ctx.tctx (IProjectT x)
   let rec mk_mulT ctx x y = match x.obj, y.obj with (* FIXME Make sure I don't make mul backwards somehow *)
     | IZeroT, _ -> mk_zeroT ctx
     | _, IZeroT -> mk_zeroT ctx
     | IOneT,  _ -> y
     | _, IOneT -> x
+  (*  | ITensor(a,b), ITensor(c,d) when a.obj = IOne && c.obj = IOne -> 
+            mk_tensor ctx (mk_one ctx) (mk_mul ctx b d) (* New rule in 2020 *)*)
   (*| ITensor(w,x), ITensor(y,z) -> mk_tensor ctx (mk_mul ctx y w) (mk_mul ctx x z)
     | IMulT(d,ITensor(w,x)), ITensor(y,z) -> mk_mulT ctx d (mk_tensor ctx (mk_mul ctx y w) (mk_mul ctx x z))
     | ITensor(w,x), IMulT(ITensor(y,z),c) -> mk_mulT ctx (mk_tensor ctx (mk_mul ctx y w) (mk_mul ctx x z)) c *)
@@ -301,6 +305,8 @@ module IcraPathExpr = struct
   let mk_addT ctx x y = match x.obj, y.obj with
     | IZeroT, _ -> y
     | _, IZeroT -> x
+  (*| ITensor(a,b), ITensor(c,d) when a.obj = IOne && c.obj = IOne -> 
+            mk_tensor ctx (mk_one ctx) (mk_add ctx b d) (* New rule in 2020 *)*)
     | _, _ -> HCT.hashcons ctx.tctx (IAddT (x, y))
   let rec mk_starT ctx x = match x.obj with
     | IZeroT -> mk_oneT ctx
