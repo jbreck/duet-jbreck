@@ -2863,42 +2863,6 @@ let arg_symbols_of_chc_hyps chc =
              atom.args)
        atoms)
 
-(*
-(* For reference, here is CHORA's C-assertion-checking code *)
-let check_assertions query entry_main assertions = 
-    if Srk.SrkUtil.Int.Map.cardinal assertions > 0 then
-    logf ~level:`always "======= Assertion Checking ======";
-    assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
-        let path = BURG.path_weight query entry_main v in
-        let sigma sym =
-          match Cra.V.of_symbol sym with
-          | Some v when K.mem_transform v path ->
-            K.get_transform v path
-          | _ -> Ctx.mk_const sym
-        in
-        let phi = Syntax.substitute_const Ctx.context sigma phi in
-        let path_condition =
-          Ctx.mk_and [K.guard path; Ctx.mk_not phi]
-          |> SrkSimplify.simplify_terms srk
-        in
-        logf ~level:`trace "Path condition:@\n%a"
-          (Syntax.pp_smtlib2 Ctx.context) path_condition;
-        Cra.dump_goal loc path_condition;
-        match Wedge.is_sat Ctx.context path_condition with
-        | `Sat -> 
-          Report.log_error loc msg;
-          Format.printf "Assertion on line %d FAILED: \"%s\"\n" loc.Cil.line msg
-        | `Unsat -> 
-          Report.log_safe ();
-          Format.printf "Assertion on line %d PASSED: \"%s\"\n" loc.Cil.line msg
-        | `Unknown ->
-          logf ~level:`warn "Z3 inconclusive";
-          Report.log_error loc msg;
-          Format.printf "Assertion on line %d FAILED/INCONCLUSIVE: \"%s\"\n" loc.Cil.line msg
-          );
-    Format.printf "=================================\n"
-*)
-
 (* This is the CHC equivalent of checking assertions *)
 let analyze_query_procedure query_summary = 
   logf ~level:`info " query summary is: %a" K.pp query_summary;
@@ -2940,11 +2904,6 @@ let build_path_in_BURG
           Syntax.Symbol.Map.add arg_sym var_record locals_map)
       Syntax.Symbol.Map.empty
       (arg_symbols_of_chc_hyps chc) in
-  (*let locals_list = 
-    List.map
-      (fun var_record -> var_record.value)
-      (BatList.of_enum (Syntax.Symbol.Map.values locals_map)) in
-  let havoc_locals = K.havoc locals_list in*)
   let proc = IntMap.find chc.conc.pred_num predsym_to_proc_map in
   let source_vertex = ref proc.entry in
   let append_edge ?target weight =
@@ -2953,15 +2912,14 @@ let build_path_in_BURG
               | Some t -> t in
     burg := WeightedGraph.add_edge !burg !source_vertex weight tgt;
     source_vertex := tgt in
-  (* Unnecessary edge: havoc the local vars of this chc *)
-  (*append_edge (Weight havoc_locals);*)
-  (* Next set of edges: two edges for each call *)
+  (* First set of edges: two edges for each call *)
   List.iter
     (fun hyp -> 
         let callee = IntMap.find hyp.pred_num predsym_to_proc_map in
         (* Call edge *)
         append_edge (Call (callee.entry,callee.exit));
-        (* The above call leaves results in globalvar_0,...,globalvar_n *)
+        (* The above call leaves results in globalvar_0,...,globalvar_n 
+             for some n *)
         let assignments = 
           List.mapi
             (fun i arg ->
@@ -2973,9 +2931,6 @@ let build_path_in_BURG
                 (local.value, global_term))
             hyp.args in
         (* Assignment edge *)
-        (* DEBUGGING: REMOVE ME LATER *)
-        (*let t =  in Format.printf "ASSIGNMENT EDGE of %s: %a@." 
-          (name_of_symbol srk (Syntax.symbol_of_int chc.conc.pred_num)) K.pp t ;*)
         append_edge (Weight (K.parallel_assign assignments)))
     chc.hyps;
   (* Finally, we create an edge that assigns to the globals using the
@@ -2998,13 +2953,6 @@ let build_path_in_BURG
           (* Now, we assign globalvar_i := conclusion_atom_arg_i *)
           (global_var, arg_term))
       chc.conc.args in
-
-  (* DEBUGGING: REMOVE ME LATER *)
-  (*let t = (K.construct guard assignments)  in
-  Format.printf "TERMINAL EDGE of %s: %a@." 
-    (name_of_symbol srk (Syntax.symbol_of_int chc.conc.pred_num)) K.pp t
-  ;*)
-
   append_edge ~target:proc.exit (Weight (K.construct guard assignments))
 
 let build_BURG_from_chc_map chc_map pred_info_map query_int =
