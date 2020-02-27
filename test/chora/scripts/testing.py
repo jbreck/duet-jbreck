@@ -699,6 +699,8 @@ def format_run(outrun) :
             else :
                 print "Unrecognized formatting style: " + formatting["style"] 
 
+def mk_range(data) : return range(1,len(data)+1)
+
 def plot_run(outrun) : 
     if not os.path.isdir(outrun) : 
         outrun = choraconfig.testroot + "/output/" + outrun
@@ -740,15 +742,72 @@ def plot_run(outrun) :
         sourcefiles.extend(localsourcefiles)
     sourcefiles = sorted(sourcefiles, key=sort_dir_major)
     #
+    print "NOTE: The following code creates a cactus plot containing the "
+    print "  published SV-COMP19 results for UAutomizer, UTaipan, and VIAP."
+    #
+    xToolsToShow = ["UAutomizer","UTaipan","VIAP"]
+    #
+    xToolTrues = dict()
+    xToolTrues["DIVINE-ns"] = 1
+    xToolTrues["skink"] = 2
+    xToolTrues["CBMC-Path"] = 2
+    xToolTrues["Pinaka"] = 3
+    xToolTrues["symbiotic"] = 3
+    xToolTrues["CBMC"] = 3
+    xToolTrues["ESBMC"] = 3
+    xToolTrues["DIVINE"] = 3
+    xToolTrues["UKojak"] = 4
+    xToolTrues["CPAchecker"] = 5
+    xToolTrues["PeSCo"] = 5
+    xToolTrues["VeriAbs"] = 6
+    xToolTrues["VIAP"] = 10
+    xToolTrues["UTaipan"] = 10
+    xToolTrues["UAutomizer"] = 12
+    #
+    xToolTimings = dict()
+    xToolTimings["DIVINE-ns"] = [8.0, 8.0, 8.1, 8.1, 8.1, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2, 8.3]  #(N=17)
+    xToolTimings["skink"] = [7.0, 7.2, 7.2, 7.2, 7.4, 7.5, 7.5, 7.6, 7.7, 8.1, 9.0, 41.0, 98.0, 210.0, 400.0, 850.0, 900.0]  #(N=17)
+    xToolTimings["CBMC-Path"] = [0.05, 0.1, 0.53, 0.85, 170.0, 180.0, 180.0, 180.0, 190.0, 190.0, 270.0, 300.0, 320.0, 780.0, 870.0, 880.0, 880.0]  #(N=17)
+    xToolTimings["Pinaka"] = [0.44, 0.56, 0.58, 41.0, 43.0, 45.0, 46.0, 46.0, 47.0, 53.0, 54.0, 54.0, 71.0, 89.0, 180.0, 230.0, 900.0]  #(N=17)
+    xToolTimings["symbiotic"] = [0.14, 0.4, 0.41, 540.0, 590.0, 650.0, 830.0, 830.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0]  #(N=17)
+    xToolTimings["CBMC"] = [0.11, 0.28, 0.34, 700.0, 790.0, 870.0, 880.0, 880.0, 880.0, 880.0, 880.0, 880.0, 880.0, 880.0, 880.0, 880.0, 880.0]  #(N=17)
+    xToolTimings["ESBMC"] = [0.12, 0.26, 0.39, 260.0, 270.0, 510.0, 540.0, 560.0, 610.0, 620.0, 760.0, 850.0, 850.0, 900.0, 900.0, 900.0, 900.0]  #(N=17)
+    xToolTimings["DIVINE"] = [8.1, 28.0, 31.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0]  #(N=17)
+    xToolTimings["UKojak"] = [9.0, 11.0, 11.0, 15.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0]  #(N=17)
+    xToolTimings["CPAchecker"] = [3.7, 3.7, 4.4, 5.0, 5.6, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 910.0, 910.0]  #(N=17)
+    xToolTimings["PeSCo"] = [14.0, 15.0, 15.0, 16.0, 17.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 910.0, 910.0]  #(N=17)
+    xToolTimings["VeriAbs"] = [9.3, 9.5, 10.0, 51.0, 72.0, 590.0, 840.0, 840.0, 870.0, 880.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0, 900.0]  #(N=17)
+    xToolTimings["VIAP"] = [4.2, 4.4, 4.7, 5.7, 5.9, 6.8, 12.0, 19.0, 36.0, 56.0, 57.0, 78.0, 110.0, 110.0, 110.0, 110.0, 110.0]  #(N=17)
+    xToolTimings["UTaipan"] = [7.7, 9.3, 10.0, 11.0, 21.0, 28.0, 47.0, 58.0, 81.0, 85.0, 900.0, 900.0, 900.0, 900.0, 900.0, 910.0, 910.0]  #(N=17)
+    xToolTimings["UAutomizer"] = [8.3, 9.8, 9.9, 10.0, 11.0, 14.0, 15.0, 21.0, 25.0, 29.0, 32.0, 360.0, 900.0, 900.0, 900.0, 900.0, 900.0]  #(N=17)
+    #
+    xToolTrueTimings = dict()
+    xToolTrueTimings["DIVINE-ns"] = [8.1]  #(N=1)
+    xToolTrueTimings["skink"] = [41.0, 210.0]  #(N=2)
+    xToolTrueTimings["CBMC-Path"] = [0.53, 0.85]  #(N=2)
+    xToolTrueTimings["Pinaka"] = [0.44, 0.56, 0.58]  #(N=3)
+    xToolTrueTimings["symbiotic"] = [0.14, 0.4, 0.41]  #(N=3)
+    xToolTrueTimings["CBMC"] = [0.11, 0.28, 0.34]  #(N=3)
+    xToolTrueTimings["ESBMC"] = [0.12, 0.26, 0.39]  #(N=3)
+    xToolTrueTimings["DIVINE"] = [8.1, 28.0, 31.0]  #(N=3)
+    xToolTrueTimings["UKojak"] = [9.0, 11.0, 11.0, 15.0]  #(N=4)
+    xToolTrueTimings["CPAchecker"] = [3.7, 3.7, 4.4, 5.0, 5.6]  #(N=5)
+    xToolTrueTimings["PeSCo"] = [14.0, 15.0, 15.0, 16.0, 17.0]  #(N=5)
+    xToolTrueTimings["VeriAbs"] = [51.0, 72.0, 590.0, 840.0, 840.0, 880.0]  #(N=6)
+    xToolTrueTimings["VIAP"] = [4.2, 5.7, 5.9, 6.8, 12.0, 19.0, 36.0, 56.0, 57.0, 78.0]  #(N=10)
+    xToolTrueTimings["UTaipan"] = [7.7, 9.3, 10.0, 11.0, 21.0, 28.0, 47.0, 58.0, 81.0, 85.0]  #(N=10)
+    xToolTrueTimings["UAutomizer"] = [8.3, 9.8, 9.9, 10.0, 11.0, 14.0, 15.0, 21.0, 25.0, 29.0, 32.0, 360.0]  #(N=12)
+    #
     datfile = Datfile(outrun+"/run.dat")
     #
     import matplotlib
     matplotlib.use("PDF")
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
+    import matplotlib.lines as mlines
     import matplotlib.ticker as mticker
     #
-    use_subset_modes = True
+    use_subset_modes = False
     subset_modes = ["all","chora1s","seahorn1s","both1s","either1s"]
     chora1s_files = list()
     seahorn1s_files = list()
@@ -779,7 +838,10 @@ def plot_run(outrun) :
     #
     for subset_mode, subset_sourcefiles in subsetmodes_lists :
         #
-        fig = plt.figure(figsize=[10.0,7.0])
+        #fig = plt.figure(figsize=[10.0,7.0])
+        #fig = plt.figure(figsize=[3.5,3.0])
+        #fig = plt.figure(figsize=[5.5,4.0]) # Originally chosen
+        fig = plt.figure(figsize=[4.0,3.5])
         #
         pass_times = dict()
         #fail_times = dict()
@@ -810,19 +872,20 @@ def plot_run(outrun) :
         # 
         legend_handles = list()
         #
-        colors = 'brcmygk'
-        ax = plt.subplot(2,1,1)
-        ax.set_title("True assertions proved")
-        #plt.xlabel("Number of benchmarks")
-        plt.ylabel("Time (s)")
-        plt.yscale('log')
-        ax.axhline(y=1.0,linestyle=":",color='#cccccc')
-        ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:g}'))
-        #ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
-        #ax.yaxis.set_minor_formatter(mticker.ScalarFormatter())
-        pass_axes = None
-        ax = plt.subplot(2,1,2)
-        ax.set_title("All true assertions")
+        #ax = plt.subplot(2,1,1)
+        #ax.set_title("True assertions proved")
+        ##plt.xlabel("Number of benchmarks")
+        #plt.ylabel("Time (s)")
+        #plt.yscale('log')
+        #ax.axhline(y=1.0,linestyle=":",color='#cccccc')
+        #ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:g}'))
+        ##ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+        ##ax.yaxis.set_minor_formatter(mticker.ScalarFormatter())
+        #pass_axes = None
+        #ax = plt.subplot(2,1,2)
+        #ax = plt.gca()
+        ax = fig.add_axes([0.15,0.14,0.82,0.83])
+        ##ax.set_title("All true assertions")
         #ax.set_title("True assertions not proved")
         plt.xlabel("Number of assertions")
         plt.ylabel("Time (s)")
@@ -831,33 +894,71 @@ def plot_run(outrun) :
         ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:g}'))
         #ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
         #ax.yaxis.set_minor_formatter(mticker.ScalarFormatter())
+        #ax.xaxis.set_minor_formatter(mticker.StrMethodFormatter('%d'))
+        #ax.xaxis.set_major_locator(mticker.MultipleLocator(1.0))
+        ax.xaxis.set_major_locator(mticker.IndexLocator(base=2.0,offset=1.0))
         max_x = 0
         fail_axes = None
         for i_tool, tool in enumerate(tools) :
+            colors = 'brcmgyk'
+            markers = 'ov^<>x'
             if i_tool < len(colors) : 
                 color = colors[i_tool]
+                marker = markers[i_tool]
             else :
                 color = 'k'
+                marker = 'o'
                 print "Warning: ran out of distinct colors for tools, defaulting to black for " + tool.ID
-            legend_handles.append(mpatches.Patch(color=color, label=tool.get('displayname')))
+            toolName = tool.get('displayname')
+            if toolName == "CHORA:full" : toolName = "CHORA"
+            if toolName == "ICRA:2019" : toolName = "ICRA"
+            #legend_handles.append(mpatches.Patch(color=color, label=toolName))
+            legend_handles.append(mlines.Line2D([0], [0], marker=marker, color=color, label=toolName,
+                          markerfacecolor=color)) #, markersize=15)
             #
             pass_times_tool = sorted(pass_times[tool.ID])
             #fail_times_tool = sorted(fail_times[tool.ID])
             all_times_tool = sorted(all_times[tool.ID])
             #
-            plt.subplot(2,1,1)
-            plt.plot(pass_times_tool,color)
+            #plt.subplot(2,1,1)
+            plt.plot(mk_range(pass_times_tool),pass_times_tool,color,marker=marker)
+            #legend_handles.append(p)
             #fail_times_tool = [-F for F in fail_times_tool]
-            plt.subplot(2,1,2)
-            plt.plot(all_times_tool,color)
-            if len(all_times[tool.ID]) > max_x : max_x = len(all_times[tool.ID])
+            #plt.subplot(2,1,2)
+            #plt.plot(mk_range(all_times_tool),all_times_tool,color)
+            #if len(all_times[tool.ID]) > max_x : max_x = len(all_times[tool.ID])
+            if len(pass_times[tool.ID]) > max_x : max_x = len(pass_times[tool.ID])
+        for j_tool, tool in enumerate(xToolsToShow) :
+            k_tool = i_tool + j_tool + 1
+            if k_tool < len(colors) : 
+                color = colors[k_tool]
+                marker = markers[k_tool]
+            else :
+                color = 'k'
+                marker = 'o'
+                print "Warning: ran out of distinct colors for tools, defaulting to black for " + tool
+            #legend_handles.append(mpatches.Patch(color=color, label=tool))
+            legend_handles.append(mlines.Line2D([0], [0], marker=marker, color=color, label=tool,
+                          markerfacecolor=color)) #, markersize=15)
+            #
+            #pass_times_tool = sorted(pass_times[tool.ID])
+            all_times_tool = sorted(xToolTrueTimings[tool])
+            #
+            #plt.subplot(2,1,1)
+            #plt.plot(pass_times_tool,color)
+            #fail_times_tool = [-F for F in fail_times_tool]
+            #plt.subplot(2,1,2)
+            plt.plot(mk_range(all_times_tool),all_times_tool,color,marker=marker)
+            if len(xToolTrueTimings[tool]) > max_x : max_x = len(xToolTrueTimings[tool])
         #
-        plt.subplot(2,1,1)
+        #plt.subplot(2,1,1)
+        #ax = plt.gca()
+        ##ax.set_xlim(xmin=0,xmax=max_x-1)
+        #ax.set_xlim(xmin=1,xmax=max_x)
+        #plt.subplot(2,1,2)
         ax = plt.gca()
-        ax.set_xlim(xmin=0,xmax=max_x-1)
-        plt.subplot(2,1,2)
-        ax = plt.gca()
-        ax.set_xlim(xmin=0,xmax=max_x-1)
+        #ax.set_xlim(xmin=0,xmax=max_x-1)
+        ax.set_xlim(xmin=1,xmax=max_x)
         #
         plt.legend(handles=legend_handles)
         fig.savefig(os.path.join(outrun,"cactus_test_" + subset_mode + ".pdf"))
@@ -885,7 +986,7 @@ def analyze_single_file(toolid, filename) :
         preproc+=".i"
         subprocess.call(["gcc","-E",filename,"-o",preproc])
     paramdict = {"filename":filename,
-                 "directory":os.path.dirname(filename),
+                 "directory":os.path.abspath(os.path.dirname(filename)),
                  "tmpfile":tmpfile,
                  #"logpath":logpath,
                  "preprocessed_filename":preproc}
