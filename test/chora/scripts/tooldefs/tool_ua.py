@@ -26,6 +26,11 @@ import choraconfig, re, sys, os.path
 #echo "__UATIME $len" >> $RESULT
 
 def ua_assert_results(params) :
+    # The following lines force Ultimate/UTaipan to close
+    with open(os.devnull,"w") as fnull :
+        subprocess.call(["killall","z3"],stdout=fnull,stderr=subprocess.STDOUT)
+        subprocess.call(["pkill","-f","java.*Ultimate"],stdout=fnull,stderr=subprocess.STDOUT)
+        subprocess.call(["pkill","-f","java.*Utaipan"],stdout=fnull,stderr=subprocess.STDOUT)
     if "logpath" not in params : 
         print "ERROR: ua_assert_results was called without a path"
         sys.exit(0)

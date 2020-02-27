@@ -26,6 +26,11 @@ import choraconfig, re, sys, os.path
 #echo "__UATIME $len" >> $RESULT
 
 def ua_assert_results(params) :
+    # The following lines force Ultimate/UTaipan to close
+    with open(os.devnull,"w") as fnull :
+        subprocess.call(["killall","z3"],stdout=fnull,stderr=subprocess.STDOUT)
+        subprocess.call(["pkill","-f","java.*Ultimate"],stdout=fnull,stderr=subprocess.STDOUT)
+        subprocess.call(["pkill","-f","java.*Utaipan"],stdout=fnull,stderr=subprocess.STDOUT)
     if "logpath" not in params : 
         print "ERROR: ua_assert_results was called without a path"
         sys.exit(0)
@@ -54,7 +59,7 @@ def ua_precheck(params) :
 
 # really should have a tool root
 tool = choraconfig.get_default_tool_dict() 
-tool["displayname"] = "Utaipan"
+tool["displayname"] = "UTaipan"
 tool["root"] = choraconfig.specify_tool_root_requirement("utaipan","Ultimate.py")
 uapy = os.path.join(tool["root"],"Ultimate.py")
 if not os.path.exists(uapy) :
