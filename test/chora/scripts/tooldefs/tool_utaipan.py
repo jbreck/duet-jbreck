@@ -1,4 +1,4 @@
-import choraconfig, re, sys, os.path
+import choraconfig, re, sys, os.path, subprocess
 
 # We used to use:
 #echo -n " UAutomizer ..."
