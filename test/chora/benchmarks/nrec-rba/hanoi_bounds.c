@@ -1,7 +1,7 @@
 // Adapted from: https://costa.fdi.ucm.es/pubs/examples.php
 #include "tick.h"
 
-static void hanoi(int n, int t, int f, int u) {
+void hanoi(int n, int t, int f, int u) {
     tick(1);
     if (n > 0) {
         hanoi(n-1, u, f, t);

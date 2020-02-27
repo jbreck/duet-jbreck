@@ -1,3 +1,6 @@
+// Adapted from "Non-Polynomial Worst-Case Analysis of Recursive Programs"
+//   by Krishnendu Chatterjee, Hongfei Fu, and Amir Kafshdar Goharshady, 
+//   in TOPLAS'19
 #include "tick.h"
 #include <stdlib.h>
 #include <stdio.h>
