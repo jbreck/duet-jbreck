@@ -1,4 +1,4 @@
-import choraconfig, re, sys, os.path, subprocess
+import choraconfig, re, sys, os.path, subprocess, time
 
 # We used to use:
 #echo -n " UAutomizer ..."
@@ -25,12 +25,23 @@ import choraconfig, re, sys, os.path, subprocess
 #len=$(expr $end - $start)
 #echo "__UATIME $len" >> $RESULT
 
-def ua_assert_results(params) :
+def ua_kill(params) :
+    if os.system("which rkill > /dev/null") == 0 :
+        with open(os.devnull, 'w') as FNULL :
+            subprocess.call(["rkill",str(params["child"].pid)],stdout=FNULL,stderr=subprocess.STDOUT)
+    else :
+        params["child"].kill()
+    time.sleep(5)
+
+def ua_cleanup(params) :
     # The following lines force Ultimate/UTaipan to close
     with open(os.devnull,"w") as fnull :
         subprocess.call(["killall","z3"],stdout=fnull,stderr=subprocess.STDOUT)
         subprocess.call(["pkill","-f","java.*Ultimate"],stdout=fnull,stderr=subprocess.STDOUT)
         subprocess.call(["pkill","-f","java.*Utaipan"],stdout=fnull,stderr=subprocess.STDOUT)
+    time.sleep(60)
+
+def ua_assert_results(params) :
     if "logpath" not in params : 
         print "ERROR: ua_assert_results was called without a path"
         sys.exit(0)
@@ -73,4 +84,6 @@ tool["cmd"] = [uapy,"--full-output","--spec","{prpfile}","--architecture","64bit
 tool["precheck"] = ua_precheck
 tool["assert_results"] = ua_assert_results
 tool["error_callout"] = choraconfig.generic_error_callout
+tool["cleanup"] = ua_cleanup
+tool["kill"] = ua_kill
 

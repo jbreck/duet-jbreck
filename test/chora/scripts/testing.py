@@ -336,6 +336,7 @@ def run(batch, stamp) :
                 for filename in batch.get("warmupfiles") :
                     cmd = [S.format(filename=filename) for S in tool.get("cmd")]
                     subprocess.call(cmd, stdout=devnull, stderr=devnull)
+                if tool.hasattr("cleanup") : tool.get("cleanup")(paramdict)
     print ""
     with open(runlogpath,"wb") as runlog :
         for filename in sorted(batch.get("files"), key=sort_dir_major) :
@@ -393,12 +394,17 @@ def run(batch, stamp) :
                             sys.stdout.flush()
                             break
                         if timeTaken >= batch.get("timeout") :
-                            child.kill()
+                            paramdict["child"] = child
+                            if tool.hasattr("kill") : 
+                                tool.get("kill")(paramdict)
+                            else :
+                                child.kill()
                             exitType = "timeout"
                             sys.stdout.write("T/O] ")
                             sys.stdout.flush()
                             anyProblem = True
                             break
+                    child = None
                 runlogline = ""
                 runlogline += "source="+nicename+"\t"
                 runlogline += "tool="+tool.ID+"\t"
@@ -406,6 +412,7 @@ def run(batch, stamp) :
                 runlogline += "time="+str(timeTaken)+"\t"
                 #trialNo = 0
                 #runlogline += "trial="+trialNo+"\t" # maybe?
+                if tool.hasattr("cleanup") : tool.get("cleanup")(paramdict)
                 if tool.hasattr("assert_results") :
                     results = tool.get("assert_results")(paramdict)
                     if tool.flag("no_assert_line_numbers") : 
@@ -452,6 +459,11 @@ def run(batch, stamp) :
     with open(donefile,"wb") as done : print >>done, completion
 
     format_run(outrun)
+
+    if batch.flag("cactus_always") : 
+        plot_run(outrun)
+        cactusPath = os.path.join(outrun, "cactus_test_all.pdf")
+        os.system("xdg-open " + cactusPath + " &")
 
 created_html_files = list()
 
@@ -584,7 +596,7 @@ def format_run(outrun) :
                 print >>html, table.show(formatting)
                 print >>html, "</div>"
                 print >>html, "</body></html>"
-                print "HTML output available at: " + htmlpath
+                print "HTML output produced: " + htmlpath
             elif formatting["style"] == "assert" :
                 # register rows and columns
                 table.register_row("head")
@@ -695,7 +707,7 @@ def format_run(outrun) :
                 print >>html, table.show(formatting)
                 print >>html, "</div>"
                 print >>html, "</body></html>"
-                print "HTML output available at: " + htmlpath
+                print "HTML output produced: " + htmlpath
             else :
                 print "Unrecognized formatting style: " + formatting["style"] 
 
@@ -742,8 +754,9 @@ def plot_run(outrun) :
         sourcefiles.extend(localsourcefiles)
     sourcefiles = sorted(sourcefiles, key=sort_dir_major)
     #
-    print "NOTE: The following code creates a cactus plot containing the "
-    print "  published SV-COMP19 results for UAutomizer, UTaipan, and VIAP."
+    print "NOTE: Now creating a cactus plot."
+    print "  If UAutomizer, UTaipan, and VIAP were not run locally, the"
+    print "  published SV-COMP19 results will be shown for those tools."
     #
     xToolsToShow = ["UAutomizer","UTaipan","VIAP"]
     #
@@ -887,7 +900,8 @@ def plot_run(outrun) :
         ax = fig.add_axes([0.15,0.14,0.82,0.83])
         ##ax.set_title("All true assertions")
         #ax.set_title("True assertions not proved")
-        plt.xlabel("Number of assertions")
+        #plt.xlabel("Number of assertions")
+        plt.xlabel("Number of benchmarks")
         plt.ylabel("Time (s)")
         plt.yscale('log')
         ax.axhline(y=1.0,linestyle=":",color='#cccccc')
@@ -899,6 +913,7 @@ def plot_run(outrun) :
         ax.xaxis.set_major_locator(mticker.IndexLocator(base=2.0,offset=1.0))
         max_x = 0
         fail_axes = None
+        all_tool_names = list()
         for i_tool, tool in enumerate(tools) :
             colors = 'brcmgyk'
             markers = 'ov^<>x'
@@ -911,7 +926,10 @@ def plot_run(outrun) :
                 print "Warning: ran out of distinct colors for tools, defaulting to black for " + tool.ID
             toolName = tool.get('displayname')
             if toolName == "CHORA:full" : toolName = "CHORA"
+            if toolName == "CHORA2020:full" : toolName = "CHORA"
             if toolName == "ICRA:2019" : toolName = "ICRA"
+            if toolName == "UAutomizer" : toolName = "U. Automizer"
+            all_tool_names.append(toolName)
             #legend_handles.append(mpatches.Patch(color=color, label=toolName))
             legend_handles.append(mlines.Line2D([0], [0], marker=marker, color=color, label=toolName,
                           markerfacecolor=color)) #, markersize=15)
@@ -928,28 +946,34 @@ def plot_run(outrun) :
             #plt.plot(mk_range(all_times_tool),all_times_tool,color)
             #if len(all_times[tool.ID]) > max_x : max_x = len(all_times[tool.ID])
             if len(pass_times[tool.ID]) > max_x : max_x = len(pass_times[tool.ID])
-        for j_tool, tool in enumerate(xToolsToShow) :
-            k_tool = i_tool + j_tool + 1
-            if k_tool < len(colors) : 
-                color = colors[k_tool]
-                marker = markers[k_tool]
-            else :
-                color = 'k'
-                marker = 'o'
-                print "Warning: ran out of distinct colors for tools, defaulting to black for " + tool
-            #legend_handles.append(mpatches.Patch(color=color, label=tool))
-            legend_handles.append(mlines.Line2D([0], [0], marker=marker, color=color, label=tool,
-                          markerfacecolor=color)) #, markersize=15)
-            #
-            #pass_times_tool = sorted(pass_times[tool.ID])
-            all_times_tool = sorted(xToolTrueTimings[tool])
-            #
-            #plt.subplot(2,1,1)
-            #plt.plot(pass_times_tool,color)
-            #fail_times_tool = [-F for F in fail_times_tool]
-            #plt.subplot(2,1,2)
-            plt.plot(mk_range(all_times_tool),all_times_tool,color,marker=marker)
-            if len(xToolTrueTimings[tool]) > max_x : max_x = len(xToolTrueTimings[tool])
+        print "Using local-run data for all tools"
+        ####for j_tool, tool in enumerate(xToolsToShow) :
+        ####    if tool in all_tool_names : 
+        ####        print "  Using local-run data for " + tool
+        ####        continue # Don't show published data if we have local-run data
+        ####    else :
+        ####        print "  Using published data for " + tool
+        ####    k_tool = i_tool + j_tool + 1
+        ####    if k_tool < len(colors) : 
+        ####        color = colors[k_tool]
+        ####        marker = markers[k_tool]
+        ####    else :
+        ####        color = 'k'
+        ####        marker = 'o'
+        ####        print "Warning: ran out of distinct colors for tools, defaulting to black for " + tool
+        ####    #legend_handles.append(mpatches.Patch(color=color, label=tool))
+        ####    legend_handles.append(mlines.Line2D([0], [0], marker=marker, color=color, label=tool,
+        ####                  markerfacecolor=color)) #, markersize=15)
+        ####    #
+        ####    #pass_times_tool = sorted(pass_times[tool.ID])
+        ####    all_times_tool = sorted(xToolTrueTimings[tool])
+        ####    #
+        ####    #plt.subplot(2,1,1)
+        ####    #plt.plot(pass_times_tool,color)
+        ####    #fail_times_tool = [-F for F in fail_times_tool]
+        ####    #plt.subplot(2,1,2)
+        ####    plt.plot(mk_range(all_times_tool),all_times_tool,color,marker=marker)
+        ####    if len(xToolTrueTimings[tool]) > max_x : max_x = len(xToolTrueTimings[tool])
         #
         #plt.subplot(2,1,1)
         #ax = plt.gca()
@@ -1050,6 +1074,7 @@ def analyze_single_file(toolid, filename) :
     #            sys.stdout.write("     " + line.rstrip() + "\n")
     #        sys.stdout.write("  ")
     #        sys.stdout.flush()
+    child = None
     os.remove(tmpfile)
 
 
