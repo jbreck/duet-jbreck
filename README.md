@@ -1,6 +1,8 @@
-Duet
+CHORA
 ====
-Duet is a static analysis tool designed for analyzing concurrent programs.
+CHORA (Compositional Higher-Order-Recurrence Analysis) is a static analyzer that finds numerical invariants of non-linearly recursive programs.
+CHORA is implemented as an analysis pass within Duet static analysis tool.
+The following instructions describe how to build and install the version of Duet that has CHORA integrated.
 
 Building
 ========
