@@ -38,7 +38,7 @@ def ua_cleanup(params) :
     with open(os.devnull,"w") as fnull :
         subprocess.call(["killall","z3"],stdout=fnull,stderr=subprocess.STDOUT)
         subprocess.call(["pkill","-f","java.*Ultimate"],stdout=fnull,stderr=subprocess.STDOUT)
-        subprocess.call(["pkill","-f","java.*Utaipan"],stdout=fnull,stderr=subprocess.STDOUT)
+        subprocess.call(["pkill","-f","java.*UTaipan"],stdout=fnull,stderr=subprocess.STDOUT)
     time.sleep(60)
 
 def ua_assert_results(params) :

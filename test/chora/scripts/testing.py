@@ -404,6 +404,7 @@ def run(batch, stamp) :
                             sys.stdout.flush()
                             anyProblem = True
                             break
+                        time.sleep(0.001)
                     child = None
                 runlogline = ""
                 runlogline += "source="+nicename+"\t"
