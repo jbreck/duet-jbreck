@@ -347,6 +347,7 @@ def run(batch, stamp) :
             sourcedest = outsources + nicename
             choraconfig.makedirs(os.path.dirname(sourcedest))
             shutil.copyfile(filename, sourcedest)
+            filename = os.path.abspath(filename)
             anyProblem = False
             for tool in tools : 
                 handle, tmpfile = tempfile.mkstemp(suffix="choratmpfile.txt")
@@ -376,7 +377,9 @@ def run(batch, stamp) :
                     print >>logfile, " ".join(cmd)
                     print >>logfile, ""
                     logfile.flush()
-                    child = subprocess.Popen(cmd, stdout=logfile, stderr=subprocess.STDOUT)
+                    cwd = None
+                    if tool.hasattr("root") : cwd = tool.get("root")
+                    child = subprocess.Popen(cmd, stdout=logfile, stderr=subprocess.STDOUT, cwd=cwd)
                     while True :
                         timeTaken = time.time() - startTime
                         if child.poll() is not None :
@@ -992,6 +995,7 @@ def analyze_single_file(toolid, filename) :
     if not os.path.exists(filename) :
         print "File not found: " + filename
         sys.exit(0)
+    filename = os.path.abspath(filename)
     tool = choraconfig.get_tool_by_ID(toolid)
     #nicename = filename
     #br_prefix = yes_post_slash(batch.get("root"))
@@ -1025,7 +1029,9 @@ def analyze_single_file(toolid, filename) :
     #sys.stdout.flush()
     timeTaken = -1.0
     print " ".join(cmd)
-    child = subprocess.Popen(cmd)
+    cwd = None
+    if tool.hasattr("root") : cwd = tool.get("root")
+    child = subprocess.Popen(cmd,cwd=cwd)
     while True :
         timeTaken = time.time() - startTime
         if child.poll() is not None :
